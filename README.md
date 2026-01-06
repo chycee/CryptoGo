@@ -61,7 +61,8 @@ api:
 
 ## 🚩 주요 마일스톤 (Milestones)
 
-- **v1.0.1 (Current)**: 비동기 시세 파이프라인, 동적 심볼 설정, 봇 감지 회피(User-Agent) 및 안정성 강화.
+- **v2.0.0 (Current)**: 데이터 영속성 레이어(SQLite), 부트스트랩 시퀀스, 아이콘 캐싱 시스템 및 안정성 강화.
+- **v1.0.1**: 비동기 시세 파이프라인, 동적 심볼 설정, 봇 감지 회피(User-Agent).
 - **v1.0.0**: 프로젝트 초기 릴리스 및 업비트/비트겟 웹소켓 기본 연동.
 
 ## 🚀 실행 및 개발 가이드 (Getting Started)
@@ -87,7 +88,7 @@ go run cmd/app/main.go
 ## 🛠️ 개발 문서
 
 - [시스템 아키텍처 (Architecture)](./docs/ARCHITECTURE.md): 계층 구조 및 비동기 데이터 흐름
-- [기술 명세서 (Specifications)](./docs/SPECIFICATIONS.md): API, 테스트, 모니터링 및 향후 로드맵
+- [기술 명세서 (Specifications)](./SPECIFICATIONS.md): API, 데이터 영속성, 테스트 및 향후 로드맵
 
 ---
-*본 프로젝트는 Advanced Agentic Coding 실습의 일환으로 고도화되었습니다 (Last Updated: 2026-01-06).*
+*본 프로젝트는 Advanced Agentic Coding 실습의 일환으로 고도화되었습니다 (Last Updated: 2026-01-07).*
