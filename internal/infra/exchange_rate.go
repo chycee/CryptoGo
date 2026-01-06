@@ -13,26 +13,25 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// dunamuResponse represents the Dunamu Forex API response
-type dunamuResponse struct {
-	Code           string  `json:"code"`
-	CurrencyCode   string  `json:"currencyCode"`
-	CurrencyName   string  `json:"currencyName"`
-	Country        string  `json:"country"`
-	Name           string  `json:"name"`
-	Date           string  `json:"date"`
-	Time           string  `json:"time"`
-	BasePrice      float64 `json:"basePrice"`
-	OpeningPrice   float64 `json:"openingPrice"`
-	HighPrice      float64 `json:"highPrice"`
-	LowPrice       float64 `json:"lowPrice"`
-	Change         string  `json:"change"`
-	ChangePrice    float64 `json:"changePrice"`
-	CashBuyingPrc  float64 `json:"cashBuyingPrice"`
-	CashSellingPrc float64 `json:"cashSellingPrice"`
+// yahooChartResponse represents the Yahoo Finance Chart API response
+type yahooChartResponse struct {
+	Chart struct {
+		Result []struct {
+			Meta struct {
+				Currency           string  `json:"currency"`
+				Symbol             string  `json:"symbol"`
+				RegularMarketPrice float64 `json:"regularMarketPrice"`
+				PreviousClose      float64 `json:"previousClose"`
+			} `json:"meta"`
+		} `json:"result"`
+		Error *struct {
+			Code        string `json:"code"`
+			Description string `json:"description"`
+		} `json:"error"`
+	} `json:"chart"`
 }
 
-// ExchangeRateClient fetches USD/KRW exchange rate from Dunamu API
+// ExchangeRateClient fetches USD/KRW exchange rate from Yahoo Finance API
 type ExchangeRateClient struct {
 	onUpdate     func(decimal.Decimal)
 	rate         decimal.Decimal
@@ -50,7 +49,7 @@ func NewExchangeRateClient(onUpdate func(decimal.Decimal)) *ExchangeRateClient {
 		onUpdate:     onUpdate,
 		rate:         decimal.Zero,
 		pollInterval: 60 * time.Second, // Default: 1 minute
-		apiURL:       "https://quotation-api-cdn.dunamu.com/v1/forex/recent?codes=FRX.KRWUSD",
+		apiURL:       "https://query1.finance.yahoo.com/v8/finance/chart/KRW=X",
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
@@ -109,7 +108,7 @@ func (c *ExchangeRateClient) Start(ctx context.Context) error {
 	return nil
 }
 
-// fetchRate fetches the current exchange rate from Dunamu API with retry logic
+// fetchRate fetches the current exchange rate from Yahoo Finance API with retry logic
 func (c *ExchangeRateClient) fetchRate(ctx context.Context) error {
 	var lastErr error
 	for i := 0; i < 3; i++ {
@@ -158,17 +157,22 @@ func (c *ExchangeRateClient) doFetch(ctx context.Context) error {
 		return err
 	}
 
-	var data []dunamuResponse
+	var data yahooChartResponse
 	if err := json.Unmarshal(body, &data); err != nil {
 		return err
 	}
 
-	if len(data) == 0 {
-		return fmt.Errorf("empty response from Dunamu API")
+	// Check for API error
+	if data.Chart.Error != nil {
+		return fmt.Errorf("Yahoo API error: %s - %s", data.Chart.Error.Code, data.Chart.Error.Description)
 	}
 
-	// Use basePrice (매매기준율) as the exchange rate
-	newRate := decimal.NewFromFloat(data[0].BasePrice)
+	if len(data.Chart.Result) == 0 {
+		return fmt.Errorf("empty response from Yahoo Finance API")
+	}
+
+	// Use regularMarketPrice as the exchange rate (USD/KRW)
+	newRate := decimal.NewFromFloat(data.Chart.Result[0].Meta.RegularMarketPrice)
 
 	c.mu.Lock()
 	oldRate := c.rate
@@ -177,7 +181,7 @@ func (c *ExchangeRateClient) doFetch(ctx context.Context) error {
 
 	// Notify if rate changed
 	if !oldRate.Equal(newRate) && c.onUpdate != nil {
-		slog.Info("Exchange rate updated",
+		slog.Info("Exchange rate updated (Yahoo Finance)",
 			slog.String("rate", newRate.String()),
 			slog.String("old_rate", oldRate.String()),
 		)

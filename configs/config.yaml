@@ -36,8 +36,8 @@ api:
       DOGE: "DOGEUSDT"
   
   exchange_rate:
-    # 두나무(업비트) 소스 - 높은 정밀도
-    url: "https://quotation-api-cdn.dunamu.com/v1/forex/recent?codes=FRX.KRWUSD"
+    # Yahoo Finance USD/KRW 환율
+    url: "https://query1.finance.yahoo.com/v8/finance/chart/KRW=X"
     poll_interval_sec: 60
 
 ui:
