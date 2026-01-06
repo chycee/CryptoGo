@@ -9,8 +9,8 @@ import (
 	"syscall"
 
 	"crypto_go/internal/app"
+	"crypto_go/internal/engine"
 	"crypto_go/internal/infra"
-	"crypto_go/internal/service"
 
 	_ "net/http/pprof" // For pprof profiling
 )
@@ -39,27 +39,29 @@ func main() {
 	// 4. Background Asset Sync (Simulating Loading Screen logic)
 	go bootstrap.SyncAssets(ctx)
 
-	// 5. Initialize Service & Workers
-	priceService := service.NewPriceService()
-	priceService.StartTickerProcessor(ctx)
-	slog.InfoContext(ctx, "✅ PriceService initialized")
+	// 5. Initialize Sequencer & Store
+	evStore := bootstrap.EventStore
+	seq := engine.NewSequencer(1024, evStore, func(state *engine.MarketState) {
+		// slog.Info("State changed", slog.String("symbol", state.Symbol), slog.String("price", state.Price.String()))
+	})
+
+	// Start Sequencer in its own goroutine (The Hotpath Loop)
+	go seq.Run(ctx)
+	slog.InfoContext(ctx, "✅ Sequencer (Hotpath) started")
 
 	cfg := bootstrap.Config
+	nextSeq := uint64(1)
 
-	// Exchange Rate Client
-	exchangeRateClient := infra.NewExchangeRateClientWithConfig(
-		priceService.UpdateExchangeRate,
-		cfg.API.ExchangeRate.URL,
-		cfg.API.ExchangeRate.PollIntervalSec,
-	)
+	// Exchange Rate Client (Gateway)
+	exchangeRateClient := infra.NewExchangeRateClient(seq.Inbox(), &nextSeq)
 	if err := exchangeRateClient.Start(ctx); err != nil {
 		slog.Error("Failed to start exchange rate client", slog.Any("error", err))
 	}
 	defer exchangeRateClient.Stop()
 
-	// Upbit Worker
+	// 6. Upbit/Bitget Workers (Gateways)
 	if len(cfg.API.Upbit.Symbols) > 0 {
-		upbitWorker := infra.NewUpbitWorker(cfg.API.Upbit.Symbols, priceService.GetTickerChan())
+		upbitWorker := infra.NewUpbitWorker(cfg.API.Upbit.Symbols, seq.Inbox(), &nextSeq)
 		if err := upbitWorker.Connect(ctx); err != nil {
 			slog.Error("Failed to connect Upbit", slog.Any("error", err))
 		}
@@ -67,10 +69,9 @@ func main() {
 		slog.InfoContext(ctx, "✅ UpbitWorker started", slog.Int("symbols", len(cfg.API.Upbit.Symbols)))
 	}
 
-	// Bitget Worker
 	if len(cfg.API.Bitget.Symbols) > 0 {
 		// Spot
-		bitgetSpotWorker := infra.NewBitgetSpotWorker(cfg.API.Bitget.Symbols, priceService.GetTickerChan())
+		bitgetSpotWorker := infra.NewBitgetSpotWorker(cfg.API.Bitget.Symbols, seq.Inbox(), &nextSeq)
 		if err := bitgetSpotWorker.Connect(ctx); err != nil {
 			slog.Error("Failed to connect Bitget Spot", slog.Any("error", err))
 		}
@@ -78,7 +79,7 @@ func main() {
 		slog.InfoContext(ctx, "✅ BitgetSpotWorker started")
 
 		// Futures
-		bitgetFuturesWorker := infra.NewBitgetFuturesWorker(cfg.API.Bitget.Symbols, priceService.GetTickerChan())
+		bitgetFuturesWorker := infra.NewBitgetFuturesWorker(cfg.API.Bitget.Symbols, seq.Inbox(), &nextSeq)
 		if err := bitgetFuturesWorker.Connect(ctx); err != nil {
 			slog.Error("Failed to connect Bitget Futures", slog.Any("error", err))
 		}
@@ -86,12 +87,10 @@ func main() {
 		slog.InfoContext(ctx, "✅ BitgetFuturesWorker started")
 	}
 
-	// TODO: UI Initialization will go here
-	slog.InfoContext(ctx, "✨ System fully operational. Press Ctrl+C to exit.")
+	slog.InfoContext(ctx, "✨ Indie Quant System fully operational. Press Ctrl+C to exit.")
 
 	// Wait for shutdown signal
 	<-ctx.Done()
 
 	slog.InfoContext(ctx, "👋 Shutting down gracefully...")
-	// Defer functions (Disconnect, Stop) will run here
 }

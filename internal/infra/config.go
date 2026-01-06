@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/shopspring/decimal"
 	"gopkg.in/yaml.v3"
 )
 
@@ -44,10 +43,10 @@ type Config struct {
 	} `yaml:"api"`
 
 	UI struct {
-		UpdateIntervalMS int             `yaml:"update_interval_ms"`
-		HistoryDays      int             `yaml:"history_days"`
-		GapThreshold     decimal.Decimal `yaml:"gap_threshold"`
-		Theme            string          `yaml:"theme"`
+		UpdateIntervalMS int    `yaml:"update_interval_ms"`
+		HistoryDays      int    `yaml:"history_days"`
+		GapThreshold     int64  `yaml:"gap_threshold"` // Micros
+		Theme            string `yaml:"theme"`
 	} `yaml:"ui"`
 
 	Logging struct {

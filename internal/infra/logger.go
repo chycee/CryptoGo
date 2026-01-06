@@ -45,7 +45,6 @@ func NewLogger(cfg *Config) *slog.Logger {
 
 	opts := &slog.HandlerOptions{
 		Level: level,
-		// AddSource: true, // Optional: Include file line number (expensive)
 	}
 
 	return slog.New(slog.NewJSONHandler(writer, opts))

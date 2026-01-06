@@ -2,40 +2,42 @@ package infra
 
 import (
 	"context"
-	"crypto_go/internal/domain"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"sync"
 	"time"
 
+	"crypto_go/internal/event"
+	"crypto_go/pkg/quant"
+
 	"github.com/gorilla/websocket"
-	"github.com/shopspring/decimal"
 )
 
 // =====================================================
 // BitgetFuturesWorker - 비트겟 선물 WebSocket
 // =====================================================
 
-// BitgetFuturesWorker handles Bitget Futures WebSocket connection
+// BitgetFuturesWorker handles Bitget Futures WebSocket connection as a Gateway
 type BitgetFuturesWorker struct {
-	symbols    map[string]string // unified -> instId (e.g., "BTC" -> "BTCUSDT")
-	tickerChan chan<- []*domain.Ticker
-	conn       *websocket.Conn
-	mu         sync.RWMutex
-	writeMu    sync.Mutex
-	connected  bool
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
+	symbols   map[string]string // unified -> instId (e.g., "BTC" -> "BTCUSDT")
+	inbox     chan<- event.Event
+	seq       *uint64
+	conn      *websocket.Conn
+	mu        sync.RWMutex
+	writeMu   sync.Mutex
+	connected bool
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
 }
 
-// NewBitgetFuturesWorker creates a new Bitget Futures worker
-func NewBitgetFuturesWorker(symbols map[string]string, tickerChan chan<- []*domain.Ticker) *BitgetFuturesWorker {
+// NewBitgetFuturesWorker creates a new Bitget Futures gateway worker
+func NewBitgetFuturesWorker(symbols map[string]string, inbox chan<- event.Event, seq *uint64) *BitgetFuturesWorker {
 	return &BitgetFuturesWorker{
-		symbols:    symbols,
-		tickerChan: tickerChan,
+		symbols: symbols,
+		inbox:   inbox,
+		seq:     seq,
 	}
 }
 
@@ -221,47 +223,31 @@ func (w *BitgetFuturesWorker) handleMessage(message []byte) {
 		return
 	}
 
-	tickers := make([]*domain.Ticker, 0, len(resp.Data))
+	ts, _ := quant.ParseTimeStamp(resp.Ts)
+
 	for _, data := range resp.Data {
 		symbol := w.findUnifiedSymbol(data.InstId)
 		if symbol == "" {
 			continue
 		}
 
-		price, _ := decimal.NewFromString(data.LastPr)
-		volume, _ := decimal.NewFromString(data.BaseVolume)
-		changeRate, _ := decimal.NewFromString(data.Change24h)
-
-		ticker := &domain.Ticker{
-			Symbol:     symbol,
-			Price:      price,
-			Volume:     volume,
-			ChangeRate: changeRate.Mul(decimal.NewFromInt(100)),
-			Exchange:   "BITGET_F",
-			Precision:  determineBitgetPrecision(data.LastPr),
+		ev := &event.MarketUpdateEvent{
+			BaseEvent: event.BaseEvent{
+				Seq: quant.NextSeq(w.seq),
+				Ts:  ts,
+			},
+			Symbol:      symbol,
+			PriceMicros: quant.ToPriceMicrosStr(data.LastPr),
+			QtySats:     quant.ToQtySatsStr(data.BaseVolume),
+			Exchange:    "BITGET_F",
 		}
 
-		// Parse funding rate if available (Futures specific)
-		if data.FundingRate != "" {
-			fr, _ := decimal.NewFromString(data.FundingRate)
-			ticker.FundingRate = &fr
-		}
-
-		// Parse next funding time if available (Futures specific)
-		if data.NextFundingTime != "" {
-			if ts, err := strconv.ParseInt(data.NextFundingTime, 10, 64); err == nil {
-				ticker.NextFundingTime = &ts
+		if w.inbox != nil {
+			select {
+			case w.inbox <- ev:
+			default:
+				slog.Warn("Bitget Futures inbox full, dropping data")
 			}
-		}
-
-		tickers = append(tickers, ticker)
-	}
-
-	if len(tickers) > 0 && w.tickerChan != nil {
-		select {
-		case w.tickerChan <- tickers:
-		default:
-			slog.Warn("Bitget Futures ticker channel full, dropping data")
 		}
 	}
 }

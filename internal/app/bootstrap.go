@@ -3,18 +3,19 @@ package app
 import (
 	"context"
 	"log/slog"
-	"sync"
-	"time"
 
 	"crypto_go/internal/domain"
 	"crypto_go/internal/infra"
-	"crypto_go/internal/infra/storage"
+	"crypto_go/internal/storage"
+	"encoding/json"
+	"sync"
+	"time"
 )
 
 // Bootstrap orchestrates the application startup sequence
 type Bootstrap struct {
 	Config     *infra.Config
-	Storage    *storage.Storage
+	EventStore *storage.EventStore
 	Downloader *infra.IconDownloader
 }
 
@@ -38,13 +39,13 @@ func (b *Bootstrap) Initialize() error {
 	logger := infra.NewLogger(cfg)
 	slog.SetDefault(logger)
 
-	// 3. Initialize Storage (DB)
-	store, err := storage.NewStorage()
+	// 3. Initialize EventStore (Single-Writer WAL DB)
+	evStore, err := storage.NewEventStore("cryptogo.db") // In real use, use getDBPath()
 	if err != nil {
 		return err
 	}
-	b.Storage = store
-	slog.Info("✅ Database initialized")
+	b.EventStore = evStore
+	slog.Info("✅ EventStore initialized (WAL-mode)")
 
 	// 4. Initialize Icon Downloader
 	downloader, err := infra.NewIconDownloader()
@@ -58,11 +59,9 @@ func (b *Bootstrap) Initialize() error {
 }
 
 // SyncAssets synchronizes symbols and icons in the background
-// This simulates the "Loading Screen" logic
 func (b *Bootstrap) SyncAssets(ctx context.Context) {
 	slog.Info("🔄 Starting asset synchronization...")
 
-	// Collect unique symbols from all exchanges
 	uniqueSymbols := make(map[string]bool)
 	for _, s := range b.Config.API.Upbit.Symbols {
 		uniqueSymbols[s] = true
@@ -72,7 +71,7 @@ func (b *Bootstrap) SyncAssets(ctx context.Context) {
 	}
 
 	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, 5) // Limit concurrent downloads
+	semaphore := make(chan struct{}, 5)
 
 	for symbol := range uniqueSymbols {
 		wg.Add(1)
@@ -81,40 +80,38 @@ func (b *Bootstrap) SyncAssets(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case semaphore <- struct{}{}: // Acquire
+			case semaphore <- struct{}{}:
 			}
-			defer func() { <-semaphore }() // Release
+			defer func() { <-semaphore }()
 
-			// 1. Upsert to DB
+			nowUnixM := time.Now().UnixMicro()
 			coin := &domain.CoinInfo{
-				Symbol:       sym,
-				Name:         sym, // Default to symbol until dynamic lookup
-				IsActive:     true,
-				UpdatedAt:    time.Now(),
-				LastSyncedAt: time.Time{}, // Force sync if needed
+				Symbol:         sym,
+				Name:           sym,
+				IsActive:       true,
+				UpdatedAtUnixM: nowUnixM,
 			}
 
-			// Check if exists to preserve IsFavorite
-			if existing, _ := b.Storage.GetCoin(sym); existing != nil {
-				coin.IsFavorite = existing.IsFavorite
-				coin.IconPath = existing.IconPath
-				coin.LastSyncedAt = existing.LastSyncedAt
+			// Try to load existing
+			key := "coin:" + sym
+			if val, _ := b.EventStore.GetMetadata(ctx, key); val != "" {
+				var existing domain.CoinInfo
+				if err := json.Unmarshal([]byte(val), &existing); err == nil {
+					coin.IsFavorite = existing.IsFavorite
+					coin.IconPath = existing.IconPath
+					coin.LastSyncedUnixM = existing.LastSyncedUnixM
+				}
 			}
 
-			if err := b.Storage.UpsertCoin(coin); err != nil {
-				slog.Error("Failed to upsert coin", slog.String("symbol", sym), slog.Any("error", err))
-			}
-
-			// 2. Download Icon (if missing)
-			path, err := b.Downloader.DownloadIcon(sym)
-			if err != nil {
-				slog.Warn("Failed to download icon", slog.String("symbol", sym), slog.Any("error", err))
-			} else if path != "" {
-				// Update path in DB
+			// Download Icon if needed
+			if path, err := b.Downloader.DownloadIcon(sym); err == nil && path != "" {
 				coin.IconPath = path
-				coin.LastSyncedAt = time.Now()
-				b.Storage.UpsertCoin(coin)
+				coin.LastSyncedUnixM = nowUnixM
 			}
+
+			// Save back to metadata
+			data, _ := json.Marshal(coin)
+			b.EventStore.UpsertMetadata(ctx, key, string(data), nowUnixM)
 		}(symbol)
 	}
 

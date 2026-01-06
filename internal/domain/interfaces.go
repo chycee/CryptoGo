@@ -3,7 +3,7 @@ package domain
 import (
 	"context"
 
-	"github.com/shopspring/decimal"
+	"crypto_go/pkg/quant"
 )
 
 // ExchangeWorker defines the interface for exchange WebSocket connectors
@@ -16,7 +16,7 @@ type ExchangeWorker interface {
 // ExchangeRateProvider defines the interface for currency exchange rate sources
 type ExchangeRateProvider interface {
 	Start(ctx context.Context) error
-	GetRate() decimal.Decimal
+	GetRate() quant.PriceMicros
 }
 
 // MarketDataRepository defines how to access market data (for future persistence or memory storage)

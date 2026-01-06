@@ -8,7 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shopspring/decimal"
+	"crypto_go/internal/event"
+	"crypto_go/pkg/quant"
 )
 
 // Helper function to create Yahoo Finance mock response
@@ -67,14 +68,9 @@ func TestExchangeRateClient_FetchRate(t *testing.T) {
 	defer server.Close()
 
 	// Create client with mock server
-	var receivedRate decimal.Decimal
-	client := NewExchangeRateClientWithConfig(
-		func(rate decimal.Decimal) {
-			receivedRate = rate
-		},
-		server.URL,
-		1,
-	)
+	inbox := make(chan event.Event, 1)
+	nextSeq := uint64(1)
+	client := NewExchangeRateClientWithConfig(inbox, &nextSeq, server.URL, 1)
 
 	// Fetch rate
 	ctx := context.Background()
@@ -83,15 +79,22 @@ func TestExchangeRateClient_FetchRate(t *testing.T) {
 		t.Fatalf("fetchRate failed: %v", err)
 	}
 
-	// Verify rate
-	expectedRate := decimal.NewFromFloat(1380.50)
-	if !client.GetRate().Equal(expectedRate) {
-		t.Errorf("Expected rate %v, got %v", expectedRate, client.GetRate())
-	}
-
-	// Verify callback was called
-	if !receivedRate.Equal(expectedRate) {
-		t.Errorf("Callback received %v, expected %v", receivedRate, expectedRate)
+	// Verify event in inbox
+	select {
+	case ev := <-inbox:
+		m, ok := ev.(*event.MarketUpdateEvent)
+		if !ok {
+			t.Fatalf("Expected MarketUpdateEvent, got %T", ev)
+		}
+		expectedPrice := quant.ToPriceMicros(1380.50)
+		if m.PriceMicros != expectedPrice {
+			t.Errorf("Expected price %d, got %d", expectedPrice, m.PriceMicros)
+		}
+		if m.Symbol != "USD/KRW" {
+			t.Errorf("Expected symbol USD/KRW, got %s", m.Symbol)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Timeout waiting for event in inbox")
 	}
 }
 
@@ -107,7 +110,9 @@ func TestExchangeRateClient_StartStop(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewExchangeRateClientWithConfig(nil, server.URL, 1)
+	inbox := make(chan event.Event, 10)
+	nextSeq := uint64(1)
+	client := NewExchangeRateClientWithConfig(inbox, &nextSeq, server.URL, 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -140,15 +145,13 @@ func TestExchangeRateClient_EmptyResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewExchangeRateClientWithConfig(nil, server.URL, 1)
+	inbox := make(chan event.Event, 1)
+	nextSeq := uint64(1)
+	client := NewExchangeRateClientWithConfig(inbox, &nextSeq, server.URL, 1)
 
 	err := client.fetchRate(context.Background())
 	if err == nil {
 		t.Error("Empty response should return error")
-	}
-
-	if !client.GetRate().IsZero() {
-		t.Error("Rate should remain zero on empty response")
 	}
 }
 
@@ -167,7 +170,9 @@ func TestExchangeRateClient_RetryOnFailure(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewExchangeRateClientWithConfig(nil, server.URL, 1)
+	inbox := make(chan event.Event, 5)
+	nextSeq := uint64(1)
+	client := NewExchangeRateClientWithConfig(inbox, &nextSeq, server.URL, 1)
 
 	// Fetch rate (should retry 2 times and succeed on 3rd)
 	err := client.fetchRate(context.Background())
@@ -177,10 +182,5 @@ func TestExchangeRateClient_RetryOnFailure(t *testing.T) {
 
 	if callCount != 3 {
 		t.Errorf("Expected 3 calls, got %d", callCount)
-	}
-
-	expectedRate := decimal.NewFromFloat(1380.50)
-	if !client.GetRate().Equal(expectedRate) {
-		t.Errorf("Expected rate %v, got %v", expectedRate, client.GetRate())
 	}
 }

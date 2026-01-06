@@ -8,31 +8,6 @@ import (
 // Bitget Precision Tests
 // =====================================================
 
-func TestDetermineBitgetPrecision(t *testing.T) {
-	tests := []struct {
-		name     string
-		priceStr string
-		want     int
-	}{
-		{"integer", "12345", 0},
-		{"one decimal", "123.4", 1},
-		{"two decimals", "12.34", 2},
-		{"four decimals", "0.1234", 4},
-		{"eight decimals", "0.12345678", 8},
-		{"zero", "0", 0},
-		{"zero with decimal", "0.00", 2},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := determineBitgetPrecision(tt.priceStr)
-			if got != tt.want {
-				t.Errorf("determineBitgetPrecision(%q) = %d, want %d", tt.priceStr, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestCalculateBitgetBackoff(t *testing.T) {
 	tests := []struct {
 		retryCount int

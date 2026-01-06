@@ -3,13 +3,13 @@ package domain
 import (
 	"testing"
 
-	"github.com/shopspring/decimal"
+	"crypto_go/pkg/quant"
 )
 
 func TestMarketData_GapPct(t *testing.T) {
 	t.Run("Normal Calculation", func(t *testing.T) {
-		spot := Ticker{Price: decimal.NewFromInt(100)}
-		future := Ticker{Price: decimal.NewFromInt(105)}
+		spot := Ticker{PriceMicros: 100 * quant.PriceScale}   // 100 USD
+		future := Ticker{PriceMicros: 105 * quant.PriceScale} // 105 USD
 
 		data := MarketData{
 			BitgetS: &spot,
@@ -17,40 +17,25 @@ func TestMarketData_GapPct(t *testing.T) {
 		}
 
 		gap := data.GapPct()
-		if gap == nil || !gap.Equal(decimal.NewFromInt(5)) {
-			t.Errorf("Expected 5%%, got %v", gap)
+		// (5 * 1,000,000) / 100 = 50,000 Micros (5%)
+		if gap != 50000 {
+			t.Errorf("Expected 50000 Micros (5%%), got %v", gap)
 		}
 	})
 
 	t.Run("Safety: Nil Pointers", func(t *testing.T) {
 		data := MarketData{}
-		if data.GapPct() != nil {
-			t.Error("Should return nil when tickers are missing")
+		if data.GapPct() != 0 {
+			t.Error("Should return 0 when tickers are missing")
 		}
 	})
 
 	t.Run("Safety: Zero Price", func(t *testing.T) {
-		spot := Ticker{Price: decimal.Zero}
-		future := Ticker{Price: decimal.NewFromInt(105)}
+		spot := Ticker{PriceMicros: 0}
+		future := Ticker{PriceMicros: 105 * quant.PriceScale}
 		data := MarketData{BitgetS: &spot, BitgetF: &future}
-		if data.GapPct() != nil {
-			t.Error("Should return nil when spot price is zero to avoid crash")
-		}
-	})
-}
-
-func TestMarketData_IsBreakoutHigh(t *testing.T) {
-	t.Run("Breakout High Detect", func(t *testing.T) {
-		high := decimal.NewFromInt(100)
-		data := MarketData{
-			Upbit: &Ticker{
-				Price:          decimal.NewFromInt(101),
-				HistoricalHigh: &high,
-			},
-		}
-
-		if !data.IsBreakoutHigh() {
-			t.Error("Should detect breakout high")
+		if data.GapPct() != 0 {
+			t.Error("Should return 0 when spot price is zero to avoid crash")
 		}
 	})
 }

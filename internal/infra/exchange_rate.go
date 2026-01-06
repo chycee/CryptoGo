@@ -7,10 +7,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"sync"
 	"time"
 
-	"github.com/shopspring/decimal"
+	"crypto_go/internal/event"
+	"crypto_go/pkg/quant"
 )
 
 // yahooChartResponse represents the Yahoo Finance Chart API response
@@ -33,22 +33,20 @@ type yahooChartResponse struct {
 
 // ExchangeRateClient fetches USD/KRW exchange rate from Yahoo Finance API
 type ExchangeRateClient struct {
-	onUpdate     func(decimal.Decimal)
-	rate         decimal.Decimal
-	mu           sync.RWMutex
+	inbox        chan<- event.Event
+	nextSeq      *uint64 // Pointer to a shared/global atomic or managed sequence
 	pollInterval time.Duration
 	apiURL       string
 	httpClient   *http.Client
 	cancel       context.CancelFunc
-	wg           sync.WaitGroup
 }
 
 // NewExchangeRateClient creates a new exchange rate client
-func NewExchangeRateClient(onUpdate func(decimal.Decimal)) *ExchangeRateClient {
+func NewExchangeRateClient(inbox chan<- event.Event, seq *uint64) *ExchangeRateClient {
 	return &ExchangeRateClient{
-		onUpdate:     onUpdate,
-		rate:         decimal.Zero,
-		pollInterval: 60 * time.Second, // Default: 1 minute
+		inbox:        inbox,
+		nextSeq:      seq,
+		pollInterval: 60 * time.Second,
 		apiURL:       "https://query1.finance.yahoo.com/v8/finance/chart/KRW=X",
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
@@ -57,8 +55,8 @@ func NewExchangeRateClient(onUpdate func(decimal.Decimal)) *ExchangeRateClient {
 }
 
 // NewExchangeRateClientWithConfig creates a client with custom configuration
-func NewExchangeRateClientWithConfig(onUpdate func(decimal.Decimal), apiURL string, pollIntervalSec int) *ExchangeRateClient {
-	client := NewExchangeRateClient(onUpdate)
+func NewExchangeRateClientWithConfig(inbox chan<- event.Event, seq *uint64, apiURL string, pollIntervalSec int) *ExchangeRateClient {
+	client := NewExchangeRateClient(inbox, seq)
 	if apiURL != "" {
 		client.apiURL = apiURL
 	}
@@ -80,9 +78,7 @@ func (c *ExchangeRateClient) Start(ctx context.Context) error {
 	}
 
 	// Start polling goroutine
-	c.wg.Add(1)
 	go func() {
-		defer c.wg.Done()
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("Exchange rate polling panic recovered", slog.Any("panic", r))
@@ -106,6 +102,13 @@ func (c *ExchangeRateClient) Start(ctx context.Context) error {
 	}()
 
 	return nil
+}
+
+// Stop cancels the polling context.
+func (c *ExchangeRateClient) Stop() {
+	if c.cancel != nil {
+		c.cancel()
+	}
 }
 
 // fetchRate fetches the current exchange rate from Yahoo Finance API with retry logic
@@ -172,36 +175,21 @@ func (c *ExchangeRateClient) doFetch(ctx context.Context) error {
 	}
 
 	// Use regularMarketPrice as the exchange rate (USD/KRW)
-	newRate := decimal.NewFromFloat(data.Chart.Result[0].Meta.RegularMarketPrice)
+	price := quant.ToPriceMicros(data.Chart.Result[0].Meta.RegularMarketPrice)
 
-	c.mu.Lock()
-	oldRate := c.rate
-	c.rate = newRate
-	c.mu.Unlock()
-
-	// Notify if rate changed
-	if !oldRate.Equal(newRate) && c.onUpdate != nil {
-		slog.Info("Exchange rate updated (Yahoo Finance)",
-			slog.String("rate", newRate.String()),
-			slog.String("old_rate", oldRate.String()),
-		)
-		c.onUpdate(newRate)
+	// Emit event to sequencer
+	c.inbox <- &event.MarketUpdateEvent{
+		BaseEvent: event.BaseEvent{
+			Seq: quant.NextSeq(c.nextSeq),
+			Ts:  quant.TimeStamp(time.Now().UnixMicro()),
+		},
+		Symbol:      "USD/KRW",
+		PriceMicros: price,
+		QtySats:     quant.QtyScale, // 1.0 fixed for rate
+		Exchange:    "YAHOO",
 	}
 
 	return nil
 }
 
-// Stop stops the polling
-func (c *ExchangeRateClient) Stop() {
-	if c.cancel != nil {
-		c.cancel()
-		c.wg.Wait()
-	}
-}
-
-// GetRate returns the current exchange rate
-func (c *ExchangeRateClient) GetRate() decimal.Decimal {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.rate
-}
+// GetRate is no longer needed in the Gateway as it doesn't own the state.

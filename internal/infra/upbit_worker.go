@@ -2,18 +2,18 @@ package infra
 
 import (
 	"context"
-	"crypto_go/internal/domain"
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"math"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"crypto_go/internal/event"
+	"crypto_go/pkg/quant"
+
 	"github.com/gorilla/websocket"
-	"github.com/shopspring/decimal"
 )
 
 const (
@@ -74,23 +74,25 @@ type upbitTickerResponse struct {
 	MarketState  string `json:"market_state"`  // 마켓 상태: PREVIEW, ACTIVE, DELISTED
 }
 
-// UpbitWorker handles Upbit WebSocket connection
+// UpbitWorker handles Upbit WebSocket connection as a Gateway
 type UpbitWorker struct {
-	symbols    []string
-	tickerChan chan<- []*domain.Ticker
-	conn       *websocket.Conn
-	mu         sync.RWMutex
-	writeMu    sync.Mutex
-	connected  bool
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
+	symbols   []string
+	inbox     chan<- event.Event
+	seq       *uint64
+	conn      *websocket.Conn
+	mu        sync.RWMutex
+	writeMu   sync.Mutex
+	connected bool
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
 }
 
-// NewUpbitWorker creates a new Upbit worker
-func NewUpbitWorker(symbols []string, tickerChan chan<- []*domain.Ticker) *UpbitWorker {
+// NewUpbitWorker creates a new Upbit gateway worker
+func NewUpbitWorker(symbols []string, inbox chan<- event.Event, seq *uint64) *UpbitWorker {
 	return &UpbitWorker{
-		symbols:    symbols,
-		tickerChan: tickerChan,
+		symbols: symbols,
+		inbox:   inbox,
+		seq:     seq,
 	}
 }
 
@@ -155,8 +157,10 @@ func (w *UpbitWorker) connectionLoop(ctx context.Context) {
 
 // calculateBackoff returns the delay for the current retry attempt
 func (w *UpbitWorker) calculateBackoff(retryCount int) time.Duration {
-	delay := upbitBaseDelay * time.Duration(math.Pow(2, float64(retryCount)))
-	if delay > upbitMaxDelay {
+	// 2^retryCount calculation without float64
+	exp := time.Duration(1 << uint(retryCount))
+	delay := upbitBaseDelay * exp
+	if delay > upbitMaxDelay || exp == 0 { // overflow check
 		delay = upbitMaxDelay
 	}
 	return delay
@@ -294,51 +298,25 @@ func (w *UpbitWorker) handleMessage(message []byte) {
 	// Extract symbol from code (e.g., "KRW-BTC" -> "BTC")
 	symbol := strings.TrimPrefix(resp.Code, "KRW-")
 
-	// Determine precision from price
-	precision := determinePrecision(resp.TradePrice)
-
-	ticker := &domain.Ticker{
-		Symbol:     symbol,
-		Price:      decimal.NewFromFloat(resp.TradePrice),
-		Volume:     decimal.NewFromFloat(resp.AccTradeVolume24h),
-		ChangeRate: decimal.NewFromFloat(resp.SignedChangeRate * 100), // Convert to percentage
-		Exchange:   "UPBIT",
-		Precision:  precision,
+	// Create MarketUpdateEvent (Boundary: Float64 -> PriceMicros)
+	ev := &event.MarketUpdateEvent{
+		BaseEvent: event.BaseEvent{
+			Seq: quant.NextSeq(w.seq),
+			Ts:  quant.TimeStamp(resp.Timestamp * 1000), // ms to micros
+		},
+		Symbol:      symbol,
+		PriceMicros: quant.ToPriceMicros(resp.TradePrice),
+		QtySats:     quant.ToQtySats(resp.AccTradeVolume24h),
+		Exchange:    "UPBIT",
 	}
 
-	// Set 52-week high/low if available
-	if resp.Highest52WeekPrice > 0 {
-		high := decimal.NewFromFloat(resp.Highest52WeekPrice)
-		ticker.HistoricalHigh = &high
-	}
-	if resp.Lowest52WeekPrice > 0 {
-		low := decimal.NewFromFloat(resp.Lowest52WeekPrice)
-		ticker.HistoricalLow = &low
-	}
-
-	if w.tickerChan != nil {
+	if w.inbox != nil {
 		select {
-		case w.tickerChan <- []*domain.Ticker{ticker}:
+		case w.inbox <- ev:
 		default:
-			slog.Warn("Upbit ticker channel full, dropping data")
+			slog.Warn("Upbit inbox full, dropping data")
 		}
 	}
-}
-
-// determinePrecision determines decimal places from a price value
-func determinePrecision(price float64) int {
-	if price >= 1000 {
-		return 0
-	} else if price >= 100 {
-		return 1
-	} else if price >= 10 {
-		return 2
-	} else if price >= 1 {
-		return 3
-	} else if price >= 0.1 {
-		return 4
-	}
-	return 8
 }
 
 // closeConnection safely closes the WebSocket connection

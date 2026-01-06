@@ -1,8 +1,6 @@
 package infra
 
 import (
-	"math"
-	"strings"
 	"time"
 )
 
@@ -94,20 +92,11 @@ type bitgetTickerData struct {
 // =====================================================
 
 func calculateBitgetBackoff(retryCount int) time.Duration {
-	// Cap retry count to prevent overflow (2^6 = 64 seconds > max 60s)
-	if retryCount > 6 {
-		return bitgetMaxDelay
-	}
-	delay := bitgetBaseDelay * time.Duration(math.Pow(2, float64(retryCount)))
-	if delay > bitgetMaxDelay {
+	// 2^retryCount calculation without float64
+	exp := time.Duration(1 << uint(retryCount))
+	delay := bitgetBaseDelay * exp
+	if delay > bitgetMaxDelay || exp == 0 { // overflow check
 		delay = bitgetMaxDelay
 	}
 	return delay
-}
-
-func determineBitgetPrecision(priceStr string) int {
-	if idx := strings.Index(priceStr, "."); idx >= 0 {
-		return len(priceStr) - idx - 1
-	}
-	return 0
 }

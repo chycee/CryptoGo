@@ -1,72 +1,48 @@
 package domain
 
-import "github.com/shopspring/decimal"
+import (
+	"crypto_go/pkg/quant"
+	"crypto_go/pkg/safe"
+)
 
 // Ticker represents price data from a single exchange
 type Ticker struct {
-	Symbol     string          `json:"symbol"`      // Unified symbol (e.g., "BTC")
-	Price      decimal.Decimal `json:"price"`       // Current price
-	Volume     decimal.Decimal `json:"volume"`      // 24h volume
-	ChangeRate decimal.Decimal `json:"change_rate"` // 24h change (%)
-	Exchange   string          `json:"exchange"`    // "UPBIT", "BITGET_S", "BITGET_F"
-	Precision  int             `json:"precision"`   // Decimal places from exchange
+	Symbol           string            `json:"symbol"`      // Unified symbol (e.g., "BTC")
+	PriceMicros      quant.PriceMicros `json:"price"`       // Current price
+	VolumeSats       quant.QtySats     `json:"volume"`      // 24h volume
+	ChangeRateMicros int64             `json:"change_rate"` // 24h change (Micros: 0.01 = 10,000)
+	Exchange         string            `json:"exchange"`    // "UPBIT", "BITGET_S", "BITGET_F"
+	Precision        int               `json:"precision"`   // Decimal places from exchange
 
 	// Bitget Futures specific
-	FundingRate     *decimal.Decimal `json:"funding_rate,omitempty"`
-	NextFundingTime *int64           `json:"next_funding_time,omitempty"`
-	HistoricalHigh  *decimal.Decimal `json:"historical_high,omitempty"`
-	HistoricalLow   *decimal.Decimal `json:"historical_low,omitempty"`
+	FundingRateMicros int64             `json:"funding_rate,omitempty"`      // Micros
+	NextFundingUnix   *int64            `json:"next_funding_time,omitempty"` // Unix Micro
+	HighPriceMicros   quant.PriceMicros `json:"historical_high,omitempty"`
+	LowPriceMicros    quant.PriceMicros `json:"historical_low,omitempty"`
 }
 
 // MarketData aggregates data for a single symbol from all exchanges
 type MarketData struct {
-	Symbol     string           `json:"symbol"`
-	Upbit      *Ticker          `json:"upbit,omitempty"`
-	BitgetS    *Ticker          `json:"bitget_s,omitempty"`
-	BitgetF    *Ticker          `json:"bitget_f,omitempty"`
-	Premium    *decimal.Decimal `json:"premium,omitempty"`
-	StatusMsg  string           `json:"status_msg"`
-	IsFavorite bool             `json:"is_favorite"`
+	Symbol        string  `json:"symbol"`
+	Upbit         *Ticker `json:"upbit,omitempty"`
+	BitgetS       *Ticker `json:"bitget_s,omitempty"`
+	BitgetF       *Ticker `json:"bitget_f,omitempty"`
+	PremiumMicros int64   `json:"premium,omitempty"` // Kimchi Premium (Micros)
+	StatusMsg     string  `json:"status_msg"`
+	IsFavorite    bool    `json:"is_favorite"`
 }
 
-// GapPct calculates Futures vs Spot gap percentage: 100 * (Future - Spot) / Spot
-func (m *MarketData) GapPct() *decimal.Decimal {
-	if m.BitgetS == nil || m.BitgetF == nil {
-		return nil
-	}
-	if m.BitgetS.Price.IsZero() {
-		return nil
+// GapPct calculates Futures vs Spot gap percentage (Micros)
+func (m *MarketData) GapPct() int64 {
+	if m.BitgetS == nil || m.BitgetF == nil || m.BitgetS.PriceMicros == 0 {
+		return 0
 	}
 
-	gap := m.BitgetF.Price.Sub(m.BitgetS.Price).Div(m.BitgetS.Price).Mul(decimal.NewFromInt(100))
-	return &gap
-}
-
-// IsBreakoutHigh returns true if price >= historical high
-func (m *MarketData) IsBreakoutHigh() bool {
-	if m.Upbit == nil || m.Upbit.HistoricalHigh == nil {
-		return false
-	}
-	return m.Upbit.Price.GreaterThanOrEqual(*m.Upbit.HistoricalHigh)
-}
-
-// IsBreakoutLow returns true if price <= historical low
-func (m *MarketData) IsBreakoutLow() bool {
-	if m.Upbit == nil || m.Upbit.HistoricalLow == nil {
-		return false
-	}
-	return m.Upbit.Price.LessThanOrEqual(*m.Upbit.HistoricalLow)
-}
-
-// BreakoutState returns "high", "low", or "normal"
-func (m *MarketData) BreakoutState() string {
-	if m.IsBreakoutHigh() {
-		return "high"
-	}
-	if m.IsBreakoutLow() {
-		return "low"
-	}
-	return "normal"
+	// GapPct calculates Futures vs Spot gap. Result is in Micros (1% = 10,000).
+	// gap_micros = (Future - Spot) * 1,000,000 / Spot
+	diff := safe.SafeSub(int64(m.BitgetF.PriceMicros), int64(m.BitgetS.PriceMicros))
+	num := safe.SafeMul(diff, quant.PriceScale)
+	return safe.SafeDiv(num, int64(m.BitgetS.PriceMicros))
 }
 
 // ChangeDirection returns "positive", "negative", or "neutral"
@@ -74,10 +50,10 @@ func (m *MarketData) ChangeDirection() string {
 	if m.Upbit == nil {
 		return "neutral"
 	}
-	if m.Upbit.ChangeRate.IsPositive() {
+	if m.Upbit.ChangeRateMicros > 0 {
 		return "positive"
 	}
-	if m.Upbit.ChangeRate.IsNegative() {
+	if m.Upbit.ChangeRateMicros < 0 {
 		return "negative"
 	}
 	return "neutral"

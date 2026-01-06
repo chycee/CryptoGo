@@ -2,7 +2,6 @@ package infra
 
 import (
 	"context"
-	"crypto_go/internal/domain"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -10,31 +9,35 @@ import (
 	"sync"
 	"time"
 
+	"crypto_go/internal/event"
+	"crypto_go/pkg/quant"
+
 	"github.com/gorilla/websocket"
-	"github.com/shopspring/decimal"
 )
 
 // =====================================================
 // BitgetSpotWorker - 비트겟 현물 WebSocket
 // =====================================================
 
-// BitgetSpotWorker handles Bitget Spot WebSocket connection
+// BitgetSpotWorker handles Bitget Spot WebSocket connection as a Gateway
 type BitgetSpotWorker struct {
-	symbols    map[string]string // unified -> instId (e.g., "BTC" -> "BTCUSDT")
-	tickerChan chan<- []*domain.Ticker
-	conn       *websocket.Conn
-	mu         sync.RWMutex
-	writeMu    sync.Mutex
-	connected  bool
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
+	symbols   map[string]string // unified -> instId (e.g., "BTC" -> "BTCUSDT")
+	inbox     chan<- event.Event
+	seq       *uint64
+	conn      *websocket.Conn
+	mu        sync.RWMutex
+	writeMu   sync.Mutex
+	connected bool
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
 }
 
-// NewBitgetSpotWorker creates a new Bitget Spot worker
-func NewBitgetSpotWorker(symbols map[string]string, tickerChan chan<- []*domain.Ticker) *BitgetSpotWorker {
+// NewBitgetSpotWorker creates a new Bitget Spot gateway worker
+func NewBitgetSpotWorker(symbols map[string]string, inbox chan<- event.Event, seq *uint64) *BitgetSpotWorker {
 	return &BitgetSpotWorker{
-		symbols:    symbols,
-		tickerChan: tickerChan,
+		symbols: symbols,
+		inbox:   inbox,
+		seq:     seq,
 	}
 }
 
@@ -222,32 +225,31 @@ func (w *BitgetSpotWorker) handleMessage(message []byte) {
 		return
 	}
 
-	tickers := make([]*domain.Ticker, 0, len(resp.Data))
+	ts, _ := quant.ParseTimeStamp(resp.Ts) // Bitget timestamp in ms
+
 	for _, data := range resp.Data {
 		symbol := w.findUnifiedSymbol(data.InstId)
 		if symbol == "" {
 			continue
 		}
 
-		price, _ := decimal.NewFromString(data.LastPr)
-		volume, _ := decimal.NewFromString(data.BaseVolume)
-		changeRate, _ := decimal.NewFromString(data.Change24h)
+		ev := &event.MarketUpdateEvent{
+			BaseEvent: event.BaseEvent{
+				Seq: quant.NextSeq(w.seq),
+				Ts:  ts,
+			},
+			Symbol:      symbol,
+			PriceMicros: quant.ToPriceMicrosStr(data.LastPr),
+			QtySats:     quant.ToQtySatsStr(data.BaseVolume),
+			Exchange:    "BITGET_S",
+		}
 
-		tickers = append(tickers, &domain.Ticker{
-			Symbol:     symbol,
-			Price:      price,
-			Volume:     volume,
-			ChangeRate: changeRate.Mul(decimal.NewFromInt(100)),
-			Exchange:   "BITGET_S",
-			Precision:  determineBitgetPrecision(data.LastPr),
-		})
-	}
-
-	if len(tickers) > 0 && w.tickerChan != nil {
-		select {
-		case w.tickerChan <- tickers:
-		default:
-			slog.Warn("Bitget Spot ticker channel full, dropping data")
+		if w.inbox != nil {
+			select {
+			case w.inbox <- ev:
+			default:
+				slog.Warn("Bitget Spot inbox full, dropping data")
+			}
 		}
 	}
 }
