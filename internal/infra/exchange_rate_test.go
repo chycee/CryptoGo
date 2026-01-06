@@ -11,14 +11,53 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-func TestExchangeRateClient_FetchRate(t *testing.T) {
-	// Create mock server
-	mockResp := []dunamuResponse{
-		{
-			Code:      "FRX.KRWUSD",
-			BasePrice: 1380.50,
+// Helper function to create Yahoo Finance mock response
+func createYahooMockResponse(price float64) yahooChartResponse {
+	return yahooChartResponse{
+		Chart: struct {
+			Result []struct {
+				Meta struct {
+					Currency           string  `json:"currency"`
+					Symbol             string  `json:"symbol"`
+					RegularMarketPrice float64 `json:"regularMarketPrice"`
+					PreviousClose      float64 `json:"previousClose"`
+				} `json:"meta"`
+			} `json:"result"`
+			Error *struct {
+				Code        string `json:"code"`
+				Description string `json:"description"`
+			} `json:"error"`
+		}{
+			Result: []struct {
+				Meta struct {
+					Currency           string  `json:"currency"`
+					Symbol             string  `json:"symbol"`
+					RegularMarketPrice float64 `json:"regularMarketPrice"`
+					PreviousClose      float64 `json:"previousClose"`
+				} `json:"meta"`
+			}{
+				{
+					Meta: struct {
+						Currency           string  `json:"currency"`
+						Symbol             string  `json:"symbol"`
+						RegularMarketPrice float64 `json:"regularMarketPrice"`
+						PreviousClose      float64 `json:"previousClose"`
+					}{
+						Currency:           "KRW",
+						Symbol:             "KRW=X",
+						RegularMarketPrice: price,
+						PreviousClose:      price - 1.0,
+					},
+				},
+			},
+			Error: nil,
 		},
 	}
+}
+
+func TestExchangeRateClient_FetchRate(t *testing.T) {
+	// Create mock server with Yahoo Finance response
+	mockResp := createYahooMockResponse(1380.50)
 	mockBody, _ := json.Marshal(mockResp)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +100,7 @@ func TestExchangeRateClient_StartStop(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
-		mockResp := []dunamuResponse{{BasePrice: 1380.50}}
+		mockResp := createYahooMockResponse(1380.50)
 		body, _ := json.Marshal(mockResp)
 		w.WriteHeader(http.StatusOK)
 		w.Write(body)
@@ -90,9 +129,14 @@ func TestExchangeRateClient_StartStop(t *testing.T) {
 }
 
 func TestExchangeRateClient_EmptyResponse(t *testing.T) {
+	// Yahoo Finance returns empty result array
+	emptyResp := yahooChartResponse{}
+	emptyResp.Chart.Result = nil
+	mockBody, _ := json.Marshal(emptyResp)
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("[]"))
+		w.Write(mockBody)
 	}))
 	defer server.Close()
 
@@ -116,7 +160,7 @@ func TestExchangeRateClient_RetryOnFailure(t *testing.T) {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
-		mockResp := []dunamuResponse{{BasePrice: 1380.50}}
+		mockResp := createYahooMockResponse(1380.50)
 		body, _ := json.Marshal(mockResp)
 		w.WriteHeader(http.StatusOK)
 		w.Write(body)
