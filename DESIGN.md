@@ -29,9 +29,11 @@
 | Overflow Policy | Drop with warning log (non-blocking send) |
 
 ```
-[External API] → [Gateway Worker] → [Bounded Chan] → [Sequencer] → [State]
-                      ↓                                   ↓
-                  (Mutex OK)                         (NO Mutex)
+[Upbit/Bitget WS] → [Gateway Worker] → [Bounded Chan] → [Sequencer] → [State]
+                          ↓                                   ↓
+                      (Mutex OK)                         (NO Mutex)
+
+[Yahoo Finance] -.환율 조회.-> [UI Layer]  (Hotpath 외부)
 ```
 
 ---

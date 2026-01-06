@@ -10,11 +10,13 @@
 
 ```mermaid
 graph LR
-    GW[Gateways: Upbit/Yahoo] --"Immutable Event"--> SEQ[Sequencer Hotpath]
-    subgraph Indie_Quant_Engine
-        SEQ --"1. WAL Log"--> DB[(SQLite WAL)]
-        SEQ --"2. Update State"--> ST[In-Memory State]
+    subgraph Gateways
+        UB[Upbit WS] --> SEQ
+        BG[Bitget WS] --> SEQ
     end
+    YH[Yahoo Finance] -."환율 조회".-> UI[UI Layer]
+    SEQ[Sequencer Hotpath] --"1. WAL Log"--> DB[(SQLite WAL)]
+    SEQ --"2. Update State"--> ST[In-Memory State]
     ST --"Deterministic Replay"--> BT[Backtest Engine]
 ```
 
@@ -58,8 +60,6 @@ go run cmd/app/main.go
 ## 🛠️ 개발 문서
 
 - [시스템 디자인 (DESIGN.md)](./DESIGN.md): Indie Quant 핵심 설계 철학 및 MVP 기준
-- [시스템 아키텍처 (Architecture)](./docs/ARCHITECTURE.md): 시퀀서 및 데이터 흐름 상세
-- [기술 명세서 (Specifications)](./docs/SPECIFICATIONS.md): 연산 정밀도 및 중단 정책(Halt Policy)
 
 ---
 *본 프로젝트는 Advanced Agentic Coding 실습의 일환으로 고도화되었습니다 (Last Updated: 2026-01-07).*
