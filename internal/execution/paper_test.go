@@ -8,7 +8,7 @@ import (
 )
 
 func TestPaperExecution_Buy(t *testing.T) {
-	paper := NewPaperExecution(quant.ToPriceMicros(100_000_000))
+	paper := NewPaperExecution(0)
 
 	// Setup: deposit 10000 USDT
 	paper.Deposit("USDT", 10000_000000)        // 10000 USDT in Sats
@@ -53,7 +53,7 @@ func TestPaperExecution_Buy(t *testing.T) {
 }
 
 func TestPaperExecution_Sell(t *testing.T) {
-	paper := NewPaperExecution(quant.ToPriceMicros(100_000_000))
+	paper := NewPaperExecution(0)
 
 	// Setup: deposit 1 BTC
 	paper.Deposit("BTC", 100_000000)           // 1 BTC in Sats
