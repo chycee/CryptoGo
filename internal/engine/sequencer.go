@@ -13,9 +13,6 @@ import (
 	"sync"
 )
 
-
-
-
 // Sequencer is the core single-threaded event processor.
 type Sequencer struct {
 	inbox   chan event.Event
@@ -31,7 +28,6 @@ type Sequencer struct {
 	mu sync.RWMutex // Used only for external reads (e.g. UI)
 }
 
-
 // NewSequencer creates a new sequencer instance.
 func NewSequencer(inboxSize int, store *storage.EventStore, strat strategy.Strategy, onUpdate func(*domain.MarketState)) *Sequencer {
 	seq := &Sequencer{
@@ -45,32 +41,40 @@ func NewSequencer(inboxSize int, store *storage.EventStore, strat strategy.Strat
 	return seq
 }
 
-// RecoverState restores state from WAL and handles sequence gaps.
-// gapTolerance: acceptable number of missing events (trading vs monitoring).
-func (s *Sequencer) RecoverState(lastSeq uint64) {
+// RecoverFromWAL restores state by replaying all events from WAL.
+// This is the core of "Backtest is Reality" - same code path for live and replay.
+func (s *Sequencer) RecoverFromWAL(ctx context.Context) error {
 	if s.store == nil {
-		return
+		slog.Info("No store configured, starting fresh")
+		return nil
 	}
-	
-	// In a real implementation, we would load the latest snapshot and then replay WAL.
-	// For now, we assume we might be restarting.
-	// If lastSeq from DB is ahead of our nextSeq (which starts at 1), we technically have a gap from 0 to lastSeq.
-	// But usually 'RecoverState' implies we loaded a snapshot.
-	
-	// Let's implement the specific logic requested: 
-	// Check if the incoming event sequence has a gap relative to our expected sequence.
-	
-	// Since this method is called at startup, let's look at the gap between
-	// what we ostensibly 'have' (0 if fresh) and what the WAL says is next.
-	// However, usually we replay ALL events from WAL.
-	
-	// The user's request specifically handled a scenario where we might receive events from WAL 
-	// that have a gap *inside* the WAL stream or relative to a snapshot.
-	
-	// Simplified Implementation conforming to request pattern:
-	// We'll trust the caller to pass the 'lastAppliedSeq' (e.g. from snapshot).
-	s.nextSeq = lastSeq + 1
-	slog.Info("State recovered", slog.Uint64("next_seq", s.nextSeq))
+
+	// Get last sequence number from WAL
+	lastSeq, err := s.store.GetLastSeq(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get last seq: %w", err)
+	}
+
+	if lastSeq == 0 {
+		slog.Info("WAL is empty, starting fresh")
+		return nil
+	}
+
+	// Load all events from WAL
+	events, err := s.store.LoadEvents(ctx, 1)
+	if err != nil {
+		return fmt.Errorf("failed to load events: %w", err)
+	}
+
+	slog.Info("Replaying events from WAL", slog.Int("count", len(events)))
+
+	// Replay each event using the same code path as live
+	for _, ev := range events {
+		s.ReplayEvent(ev)
+	}
+
+	slog.Info("State recovered from WAL", slog.Uint64("next_seq", s.nextSeq))
+	return nil
 }
 
 // ValidateSequence checks for gaps based on strictness policy.
@@ -81,7 +85,7 @@ func (s *Sequencer) ValidateSequence(evSeq uint64) {
 	}
 
 	diff := int64(evSeq) - int64(expected)
-	
+
 	// Case 1: Replay/Duplicate (Old event)
 	if diff < 0 {
 		slog.Warn("SEQUENCE_DUPLICATE_IGNORED", slog.Uint64("expected", expected), slog.Uint64("got", evSeq))
@@ -92,11 +96,11 @@ func (s *Sequencer) ValidateSequence(evSeq uint64) {
 	if diff > 0 {
 		// User Request: Allow small gaps <= 10 for Availability
 		if diff <= 10 {
-			slog.Warn("SEQUENCE_GAP_TOLERATED", 
-				slog.Uint64("expected", expected), 
-				slog.Uint64("got", evSeq), 
+			slog.Warn("SEQUENCE_GAP_TOLERATED",
+				slog.Uint64("expected", expected),
+				slog.Uint64("got", evSeq),
 				slog.Int64("gap", diff))
-			
+
 			// Fast-forward sequence to match event
 			// TODO: In Execution Phase, this MUST accept a state-resync triggers
 			s.nextSeq = evSeq
@@ -107,7 +111,6 @@ func (s *Sequencer) ValidateSequence(evSeq uint64) {
 		panic(fmt.Sprintf("SEQUENCE_GAP_FATAL: expected %d, got %d", expected, evSeq))
 	}
 }
-
 
 // Inbox returns the event channel. External workers send events here.
 func (s *Sequencer) Inbox() chan<- event.Event {
@@ -211,7 +214,6 @@ func (s *Sequencer) handleMarketUpdate(e *event.MarketUpdateEvent) {
 	}
 }
 
-
 // GetMarketState returns a snapshot of the market state (external read).
 func (s *Sequencer) GetMarketState(symbol string) (domain.MarketState, bool) {
 	s.mu.RLock()
@@ -224,7 +226,6 @@ func (s *Sequencer) GetMarketState(symbol string) (domain.MarketState, bool) {
 	return *state, true // Return copy
 }
 
-
 // DumpState writes the entire internal state to a file (for post-mortem).
 func (s *Sequencer) DumpState(filename string) {
 	slog.Info("Dumping internal state...", slog.String("file", filename))
@@ -236,7 +237,6 @@ func (s *Sequencer) DumpState(filename string) {
 		NextSeq: s.nextSeq,
 		Markets: s.markets,
 	}
-
 
 	b, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {

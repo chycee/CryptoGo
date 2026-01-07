@@ -103,6 +103,60 @@ func (s *EventStore) GetMetadata(ctx context.Context, key string) (string, error
 	return value, err
 }
 
+// GetLastSeq returns the highest event sequence number stored in WAL.
+// Returns 0 if no events exist.
+func (s *EventStore) GetLastSeq(ctx context.Context) (uint64, error) {
+	var lastSeq sql.NullInt64
+	err := s.db.QueryRowContext(ctx, "SELECT MAX(id) FROM events").Scan(&lastSeq)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get last seq: %w", err)
+	}
+	if !lastSeq.Valid {
+		return 0, nil // No events yet
+	}
+	return uint64(lastSeq.Int64), nil
+}
+
+// LoadEvents loads all events from WAL starting from fromSeq (inclusive).
+// Used for Replay Engine to reconstruct state.
+func (s *EventStore) LoadEvents(ctx context.Context, fromSeq uint64) ([]*event.MarketUpdateEvent, error) {
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT id, type, ts, payload FROM events WHERE id >= ? ORDER BY id ASC",
+		fromSeq,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []*event.MarketUpdateEvent
+	for rows.Next() {
+		var id int64
+		var evType int
+		var ts int64
+		var payload []byte
+
+		if err := rows.Scan(&id, &evType, &ts, &payload); err != nil {
+			return nil, fmt.Errorf("failed to scan event: %w", err)
+		}
+
+		// Currently only supporting MarketUpdateEvent for replay
+		if event.Type(evType) == event.EvMarketUpdate {
+			var ev event.MarketUpdateEvent
+			if err := json.Unmarshal(payload, &ev); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal event %d: %w", id, err)
+			}
+			events = append(events, &ev)
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
+	}
+
+	return events, nil
+}
+
 // Close closes the database connection.
 func (s *EventStore) Close() error {
 	return s.db.Close()
