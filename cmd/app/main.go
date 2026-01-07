@@ -36,6 +36,9 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 2.1 Display Safety UX (Banner)
+	infra.PrintBanner(bootstrap.Config)
+
 	// 3. Graceful Shutdown Context
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -45,14 +48,13 @@ func main() {
 
 	// 5. Initialize Strategy & Sequencer
 	evStore := bootstrap.EventStore
-	
+
 	// Example Strategy: SMA Cross (3, 5) for BTC-USDT
 	strat := strategy.NewSMACrossStrategy("BTC-USDT", 3, 5)
 
 	seq := engine.NewSequencer(1024, evStore, strat, func(state *domain.MarketState) {
 		// slog.Info("State changed", slog.String("symbol", state.Symbol), slog.String("price", state.PriceMicros.String()))
 	})
-
 
 	// Start Sequencer in its own goroutine (The Hotpath Loop)
 	go seq.Run(ctx)

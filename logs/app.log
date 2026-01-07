@@ -1,0 +1,14 @@
+{"time":"2026-01-07T19:52:24.9487959+09:00","level":"INFO","msg":"✅ EventStore initialized (WAL-mode)","path":"data\\paper\\events.db","mode":"paper"}
+{"time":"2026-01-07T19:52:24.9493195+09:00","level":"INFO","msg":"✅ Icon downloader ready"}
+{"time":"2026-01-07T19:52:24.9493195+09:00","level":"INFO","msg":"✅ Sequencer (Hotpath) started"}
+{"time":"2026-01-07T19:52:24.9498404+09:00","level":"INFO","msg":"🔄 Starting asset synchronization..."}
+{"time":"2026-01-07T19:52:24.9498404+09:00","level":"INFO","msg":"Sequencer started (Single-Thread Hotpath)"}
+{"time":"2026-01-07T19:52:25.3185895+09:00","level":"INFO","msg":"✅ UpbitWorker started","symbols":5}
+{"time":"2026-01-07T19:52:25.3185895+09:00","level":"WARN","msg":"SEQUENCE_GAP_TOLERATED","expected":1,"got":2,"gap":1}
+{"time":"2026-01-07T19:52:25.3185895+09:00","level":"INFO","msg":"✅ BitgetSpotWorker started"}
+{"time":"2026-01-07T19:52:25.3185895+09:00","level":"INFO","msg":"✅ BitgetFuturesWorker started"}
+{"time":"2026-01-07T19:52:25.3185895+09:00","level":"INFO","msg":"✨ Indie Quant System fully operational. Press Ctrl+C to exit."}
+{"time":"2026-01-07T19:52:25.3435668+09:00","level":"INFO","msg":"Upbit Connected","subs":5}
+{"time":"2026-01-07T19:52:25.3563895+09:00","level":"INFO","msg":"✨ Asset synchronization completed"}
+{"time":"2026-01-07T19:52:25.6610912+09:00","level":"INFO","msg":"Bitget Spot Connected"}
+{"time":"2026-01-07T19:52:25.7494137+09:00","level":"INFO","msg":"Bitget Futures Connected"}
