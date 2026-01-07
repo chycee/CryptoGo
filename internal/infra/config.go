@@ -20,6 +20,10 @@ type Config struct {
 		Version string `yaml:"version"`
 	} `yaml:"app"`
 
+	Trading struct {
+		Mode string `yaml:"mode"`
+	} `yaml:"trading"`
+
 	API struct {
 		Upbit struct {
 			WSURL     string   `yaml:"ws_url"`

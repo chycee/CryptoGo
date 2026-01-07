@@ -22,9 +22,9 @@ func TestPaperExecution_Buy(t *testing.T) {
 		QtySats: 10_000000, // 0.1 BTC in Sats
 	}
 
-	err := paper.SubmitOrder(context.Background(), order)
+	err := paper.ExecuteOrder(context.Background(), order)
 	if err != nil {
-		t.Fatalf("SubmitOrder failed: %v", err)
+		t.Fatalf("ExecuteOrder failed: %v", err)
 	}
 
 	// Verify BTC balance
@@ -67,9 +67,9 @@ func TestPaperExecution_Sell(t *testing.T) {
 		QtySats: 50_000000, // 0.5 BTC in Sats
 	}
 
-	err := paper.SubmitOrder(context.Background(), order)
+	err := paper.ExecuteOrder(context.Background(), order)
 	if err != nil {
-		t.Fatalf("SubmitOrder failed: %v", err)
+		t.Fatalf("ExecuteOrder failed: %v", err)
 	}
 
 	// Verify BTC balance (should be 0.5 BTC left)
@@ -102,7 +102,7 @@ func TestPaperExecution_InsufficientBalance(t *testing.T) {
 		QtySats: 100_000000, // 1 BTC
 	}
 
-	err := paper.SubmitOrder(context.Background(), order)
+	err := paper.ExecuteOrder(context.Background(), order)
 	if err == nil {
 		t.Fatal("Expected error for insufficient balance, got nil")
 	}

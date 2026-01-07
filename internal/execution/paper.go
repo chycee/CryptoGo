@@ -34,9 +34,13 @@ type PaperExecution struct {
 }
 
 // NewPaperExecution creates a new paper trading executor.
-func NewPaperExecution() *PaperExecution {
+func NewPaperExecution(initialBalance quant.PriceMicros) *PaperExecution {
+	// Default to USDT initial balance
+	balances := domain.NewBalanceBook()
+	balances.Get("USDT").Credit(int64(initialBalance), 0)
+
 	return &PaperExecution{
-		balances: domain.NewBalanceBook(),
+		balances: balances,
 		orders:   make(map[string]*domain.Order),
 		fills:    make([]Fill, 0),
 		prices:   make(map[string]quant.PriceMicros),
@@ -59,9 +63,9 @@ func (p *PaperExecution) UpdatePrice(symbol string, priceMicros quant.PriceMicro
 	p.prices[symbol] = priceMicros
 }
 
-// SubmitOrder executes a market order immediately against virtual balance.
+// ExecuteOrder executes a market order immediately against virtual balance.
 // For MARKET orders, uses current price. For LIMIT orders, uses order price.
-func (p *PaperExecution) SubmitOrder(ctx context.Context, order domain.Order) error {
+func (p *PaperExecution) ExecuteOrder(ctx context.Context, order domain.Order) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
