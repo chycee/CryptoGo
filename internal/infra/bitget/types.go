@@ -6,14 +6,14 @@ import (
 )
 
 const (
-	spotWSURL     = "wss://ws-api.bitget.com/spot/v1/stream"
-	futuresWSURL  = "wss://ws-api.bitget.com/mix/v1/stream"
-	maxRetries    = 10
-	baseDelay     = 1 * time.Second
-	maxDelay      = 60 * time.Second
-	pingInterval  = 30 * time.Second
-	readTimeout   = 60 * time.Second
-	DefaultUserAgent = "Mozilla/5.0"
+	spotWSURL    = "wss://ws.bitget.com/v2/ws/public"
+	futuresWSURL = "wss://ws.bitget.com/v2/ws/public"
+	maxRetries   = 10
+	baseDelay    = 1 * time.Second
+	maxDelay     = 60 * time.Second
+	pingInterval = 30 * time.Second
+	readTimeout  = 60 * time.Second
+	// DefaultUserAgent is defined in crypto_go/internal/infra/config.go
 )
 
 // subscribeRequest Structure
@@ -44,5 +44,5 @@ type tickerData struct {
 }
 
 func NextSeq(seq *uint64) uint64 {
-    return quant.NextSeq(seq)
+	return quant.NextSeq(seq)
 }

@@ -116,8 +116,7 @@ func (c *ExchangeRateClient) fetchRate(ctx context.Context) error {
 	var lastErr error
 	for i := 0; i < 3; i++ {
 		if i > 0 {
-			// Exponential backoff: 1s, 2s, 4s
-			delay := time.Duration(1<<uint(i-1)) * time.Second
+			delay := CalculateBackoff(i)
 			slog.Info("Retrying exchange rate fetch", slog.Int("attempt", i), slog.Duration("delay", delay))
 			select {
 			case <-ctx.Done():

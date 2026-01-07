@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"crypto_go/internal/event"
+	"crypto_go/internal/infra"
 	"crypto_go/pkg/quant"
 
 	"github.com/gorilla/websocket"
@@ -59,7 +60,8 @@ func (w *SpotWorker) connectionLoop(ctx context.Context) {
 			if retryCount > maxRetries {
 				retryCount = 0 // Infinite retry loop for monitoring
 			}
-			time.Sleep(baseDelay * time.Duration(retryCount)) 
+			delay := infra.CalculateBackoff(retryCount)
+			time.Sleep(delay)
 		} else {
 			retryCount = 0
 			w.readLoop(ctx)
@@ -83,7 +85,7 @@ func (w *SpotWorker) connect(ctx context.Context) error {
 		w.closeConnection()
 		return err
 	}
-	
+
 	go w.pingLoop(ctx)
 	slog.Info("Bitget Spot Connected")
 	return nil
@@ -130,7 +132,7 @@ func (w *SpotWorker) readLoop(ctx context.Context) {
 			return
 		default:
 		}
-		
+
 		w.mu.RLock()
 		if w.conn == nil {
 			w.mu.RUnlock()
@@ -144,7 +146,9 @@ func (w *SpotWorker) readLoop(ctx context.Context) {
 			w.closeConnection()
 			return
 		}
-		if string(msg) == "pong" { continue }
+		if string(msg) == "pong" {
+			continue
+		}
 		w.handleMessage(msg)
 	}
 }
@@ -152,14 +156,18 @@ func (w *SpotWorker) readLoop(ctx context.Context) {
 func (w *SpotWorker) handleMessage(msg []byte) {
 	var resp tickerResponse
 	json.Unmarshal(msg, &resp)
-	if resp.Arg.Channel != "ticker" || len(resp.Data) == 0 { return }
+	if resp.Arg.Channel != "ticker" || len(resp.Data) == 0 {
+		return
+	}
 
 	// Bitget sends Timestamp in Milliseconds (int64)
 	ts := quant.TimeStamp(resp.Ts * 1000)
-	
+
 	for _, data := range resp.Data {
 		symbol := w.findSymbol(data.InstId)
-		if symbol == "" { continue }
+		if symbol == "" {
+			continue
+		}
 
 		ev := event.AcquireMarketUpdateEvent()
 		ev.Seq = quant.NextSeq(w.seq)
@@ -169,9 +177,9 @@ func (w *SpotWorker) handleMessage(msg []byte) {
 		ev.QtySats = quant.ToQtySatsStr(data.BaseVolume)
 		ev.Exchange = "BITGET_S"
 
-		select { 
-		case w.inbox <- ev: 
-		default: 
+		select {
+		case w.inbox <- ev:
+		default:
 			event.ReleaseMarketUpdateEvent(ev) // Release if dropped
 		}
 	}
@@ -179,7 +187,9 @@ func (w *SpotWorker) handleMessage(msg []byte) {
 
 func (w *SpotWorker) findSymbol(instId string) string {
 	for s, id := range w.symbols {
-		if id == instId { return s }
+		if id == instId {
+			return s
+		}
 	}
 	return ""
 }
@@ -187,12 +197,17 @@ func (w *SpotWorker) findSymbol(instId string) string {
 func (w *SpotWorker) closeConnection() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.conn != nil { w.conn.Close(); w.conn = nil }
+	if w.conn != nil {
+		w.conn.Close()
+		w.conn = nil
+	}
 	w.connected = false
 }
 
 func (w *SpotWorker) Disconnect() {
-	if w.cancel != nil { w.cancel() }
+	if w.cancel != nil {
+		w.cancel()
+	}
 	w.closeConnection()
 	w.wg.Wait()
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"crypto_go/internal/event"
+	"crypto_go/internal/infra"
 	"crypto_go/pkg/quant"
 
 	"github.com/gorilla/websocket"
@@ -59,7 +60,8 @@ func (w *FuturesWorker) connectionLoop(ctx context.Context) {
 			if retryCount > maxRetries {
 				retryCount = 0
 			}
-			time.Sleep(baseDelay * time.Duration(retryCount))
+			delay := infra.CalculateBackoff(retryCount)
+			time.Sleep(delay)
 		} else {
 			retryCount = 0
 			w.readLoop(ctx)
@@ -83,7 +85,7 @@ func (w *FuturesWorker) connect(ctx context.Context) error {
 		w.closeConnection()
 		return err
 	}
-	
+
 	go w.pingLoop(ctx)
 	slog.Info("Bitget Futures Connected")
 	return nil
@@ -92,7 +94,8 @@ func (w *FuturesWorker) connect(ctx context.Context) error {
 func (w *FuturesWorker) subscribe() error {
 	args := make([]subscribeArg, 0, len(w.symbols))
 	for _, id := range w.symbols {
-		args = append(args, subscribeArg{InstType: "MC", Channel: "ticker", InstId: id})
+		// V2 API uses USDT-FUTURES
+		args = append(args, subscribeArg{InstType: "USDT-FUTURES", Channel: "ticker", InstId: id})
 	}
 	req := subscribeRequest{Op: "subscribe", Args: args}
 	b, _ := json.Marshal(req)
@@ -131,13 +134,21 @@ func (w *FuturesWorker) readLoop(ctx context.Context) {
 		default:
 		}
 		w.mu.RLock()
-		if w.conn == nil { w.mu.RUnlock(); return }
+		if w.conn == nil {
+			w.mu.RUnlock()
+			return
+		}
 		w.conn.SetReadDeadline(time.Now().Add(readTimeout))
 		w.mu.RUnlock()
 
 		_, msg, err := w.conn.ReadMessage()
-		if err != nil { w.closeConnection(); return }
-		if string(msg) == "pong" { continue }
+		if err != nil {
+			w.closeConnection()
+			return
+		}
+		if string(msg) == "pong" {
+			continue
+		}
 		w.handleMessage(msg)
 	}
 }
@@ -145,13 +156,17 @@ func (w *FuturesWorker) readLoop(ctx context.Context) {
 func (w *FuturesWorker) handleMessage(msg []byte) {
 	var resp tickerResponse
 	json.Unmarshal(msg, &resp)
-	if resp.Arg.Channel != "ticker" || len(resp.Data) == 0 { return }
+	if resp.Arg.Channel != "ticker" || resp.Data == nil {
+		return
+	}
 
 	ts := quant.TimeStamp(resp.Ts * 1000)
-	
+
 	for _, data := range resp.Data {
 		symbol := w.findSymbol(data.InstId)
-		if symbol == "" { continue }
+		if symbol == "" {
+			continue
+		}
 
 		ev := event.AcquireMarketUpdateEvent()
 		ev.Seq = quant.NextSeq(w.seq)
@@ -161,9 +176,9 @@ func (w *FuturesWorker) handleMessage(msg []byte) {
 		ev.QtySats = quant.ToQtySatsStr(data.Volume24h)
 		ev.Exchange = "BITGET_F"
 
-		select { 
-		case w.inbox <- ev: 
-		default: 
+		select {
+		case w.inbox <- ev:
+		default:
 			event.ReleaseMarketUpdateEvent(ev)
 		}
 	}
@@ -171,7 +186,9 @@ func (w *FuturesWorker) handleMessage(msg []byte) {
 
 func (w *FuturesWorker) findSymbol(instId string) string {
 	for s, id := range w.symbols {
-		if id == instId { return s }
+		if id == instId {
+			return s
+		}
 	}
 	return ""
 }
@@ -179,12 +196,17 @@ func (w *FuturesWorker) findSymbol(instId string) string {
 func (w *FuturesWorker) closeConnection() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.conn != nil { w.conn.Close(); w.conn = nil }
+	if w.conn != nil {
+		w.conn.Close()
+		w.conn = nil
+	}
 	w.connected = false
 }
 
 func (w *FuturesWorker) Disconnect() {
-	if w.cancel != nil { w.cancel() }
+	if w.cancel != nil {
+		w.cancel()
+	}
 	w.closeConnection()
 	w.wg.Wait()
 }

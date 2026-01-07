@@ -17,12 +17,12 @@ import (
 )
 
 const (
-	wsURL        = "wss://api.upbit.com/websocket/v1"
-	maxRetries   = 10
-	baseDelay    = 1 * time.Second
-	maxDelay     = 60 * time.Second
-	pingInterval = 30 * time.Second
-	readTimeout  = 60 * time.Second
+	wsURL            = "wss://api.upbit.com/websocket/v1"
+	maxRetries       = 10
+	baseDelay        = 1 * time.Second
+	maxDelay         = 60 * time.Second
+	pingInterval     = 30 * time.Second
+	readTimeout      = 60 * time.Second
 	DefaultUserAgent = "Mozilla/5.0"
 )
 
@@ -108,7 +108,7 @@ func (w *Worker) calculateBackoff(retryCount int) time.Duration {
 func (w *Worker) connect(ctx context.Context) error {
 	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
 	header := make(http.Header)
-	header.Add("User-Agent", DefaultUserAgent)
+	// header.Add("User-Agent", DefaultUserAgent)
 
 	conn, _, err := dialer.DialContext(ctx, wsURL, header)
 	if err != nil {
@@ -124,7 +124,7 @@ func (w *Worker) connect(ctx context.Context) error {
 		w.closeConnection()
 		return err
 	}
-	
+
 	slog.Info("Upbit Connected", slog.Int("subs", len(w.symbols)))
 	return nil
 }
@@ -164,7 +164,7 @@ func (w *Worker) readLoop(ctx context.Context) {
 			return
 		default:
 		}
-		
+
 		w.mu.RLock()
 		if w.conn == nil {
 			w.mu.RUnlock()

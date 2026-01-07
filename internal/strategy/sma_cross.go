@@ -2,7 +2,6 @@ package strategy
 
 import (
 	"crypto_go/internal/domain"
-	"crypto_go/pkg/quant"
 	"crypto_go/pkg/safe"
 )
 
@@ -41,7 +40,7 @@ func NewSMACrossStrategy(symbol string, shortPeriod, longPeriod int) *SMACrossSt
 }
 
 // OnMarketUpdate processes market updates and generates signals.
-func (s *SMACrossStrategy) OnMarketUpdate(state domain.MarketState) []Action {
+func (s *SMACrossStrategy) OnMarketUpdate(state domain.MarketState) []domain.Order {
 	// 1. Filter by symbol
 	if state.Symbol != s.symbol {
 		return nil
@@ -80,27 +79,31 @@ func (s *SMACrossStrategy) OnMarketUpdate(state domain.MarketState) []Action {
 	// Short SMA requires manual calculation over the ring buffer
 	currShortSMA := s.calculateShortSMA()
 
-	var actions []Action
+	var orders []domain.Order
 
 	// 5. Check for Cross
 	if s.prevShortSMA != 0 && s.prevLongSMA != 0 {
-		// Golden Cross: Short goes above Long
+		// Golden Cross: Short goes above Long -> BUY
 		if s.prevShortSMA <= s.prevLongSMA && currShortSMA > currLongSMA {
-			actions = append(actions, Action{
-				Type:   ActionBuy,
-				Symbol: s.symbol,
-				Price:  state.PriceMicros,
-				Qty:    quant.QtySats(10000),
+			orders = append(orders, domain.Order{
+				Symbol:      s.symbol,
+				Side:        "BUY",
+				Type:        "MARKET",
+				PriceMicros: int64(state.PriceMicros), // Market order doesn't strictly need price, but good for reference
+				QtySats:     10000,                    // Hardcoded for MVP
+				Status:      "NEW",
 			})
 		}
 
-		// Dead Cross: Short goes below Long
+		// Dead Cross: Short goes below Long -> SELL
 		if s.prevShortSMA >= s.prevLongSMA && currShortSMA < currLongSMA {
-			actions = append(actions, Action{
-				Type:   ActionSell,
-				Symbol: s.symbol,
-				Price:  state.PriceMicros,
-				Qty:    quant.QtySats(10000),
+			orders = append(orders, domain.Order{
+				Symbol:      s.symbol,
+				Side:        "SELL",
+				Type:        "MARKET",
+				PriceMicros: int64(state.PriceMicros),
+				QtySats:     10000,
+				Status:      "NEW",
 			})
 		}
 	}
@@ -109,7 +112,12 @@ func (s *SMACrossStrategy) OnMarketUpdate(state domain.MarketState) []Action {
 	s.prevShortSMA = currShortSMA
 	s.prevLongSMA = currLongSMA
 
-	return actions
+	return orders
+}
+
+// OnOrderUpdate handles order updates (Empty for now)
+func (s *SMACrossStrategy) OnOrderUpdate(order domain.Order) {
+	// TODO: Update internal state based on fills if needed
 }
 
 // calculateShortSMA calculates the SMA for the short period using the ring buffer.
