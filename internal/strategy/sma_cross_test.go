@@ -12,7 +12,7 @@ func TestSMACrossStrategy(t *testing.T) {
 	strat := strategy.NewSMACrossStrategy("BTC", 3, 5)
 
 	// Helper to push price and check action
-	push := func(price int64) []strategy.Action {
+	push := func(price int64) []domain.Order {
 		state := domain.MarketState{
 			Symbol:      "BTC",
 			PriceMicros: quant.PriceMicros(price),
@@ -34,19 +34,19 @@ func TestSMACrossStrategy(t *testing.T) {
 
 	// T1-T5: All 100
 	for i := 0; i < 5; i++ {
-		actions := push(100)
-		if len(actions) > 0 {
-			t.Errorf("T%d: Expected no actions, got %v", i, actions)
+		orders := push(100)
+		if len(orders) > 0 {
+			t.Errorf("T%d: Expected no orders, got %v", i, orders)
 		}
 	}
 
 	// T6: Price jumps to 200
-	actions := push(200)
-	if len(actions) != 1 {
-		t.Fatalf("T6: Expected 1 action (BUY), got %d", len(actions))
+	orders := push(200)
+	if len(orders) != 1 {
+		t.Fatalf("T6: Expected 1 order (BUY), got %d", len(orders))
 	}
-	if actions[0].Type != strategy.ActionBuy {
-		t.Errorf("T6: Expected BUY, got %s", actions[0].Type)
+	if orders[0].Side != "BUY" {
+		t.Errorf("T6: Expected BUY, got %s", orders[0].Side)
 	}
 
 	// T7: Price drops to 50
@@ -55,9 +55,9 @@ func TestSMACrossStrategy(t *testing.T) {
 	// Long(5)  = (100+100+100+200+50)/5 = 550/5 = 110
 	// Prev(S=133, L=120) -> Curr(S=116 > L=110)
 	// Still above, no cross.
-	actions = push(50)
-	if len(actions) != 0 {
-		t.Errorf("T7: Expected no actions, got %v", actions)
+	orders = push(50)
+	if len(orders) != 0 {
+		t.Errorf("T7: Expected no orders, got %v", orders)
 	}
 
 	// T8: Price drops to 0
@@ -65,11 +65,11 @@ func TestSMACrossStrategy(t *testing.T) {
 	// Short(3) = (200+50+0)/3 = 83
 	// Long(5)  = 450/5 = 90
 	// Prev(S=116, L=110) -> Curr(S=83 < L=90) => DEAD CROSS (SELL)
-	actions = push(0)
-	if len(actions) != 1 {
-		t.Fatalf("T8: Expected 1 action (SELL), got %d", len(actions))
+	orders = push(0)
+	if len(orders) != 1 {
+		t.Fatalf("T8: Expected 1 order (SELL), got %d", len(orders))
 	}
-	if actions[0].Type != strategy.ActionSell {
-		t.Errorf("T8: Expected SELL, got %s", actions[0].Type)
+	if orders[0].Side != "SELL" {
+		t.Errorf("T8: Expected SELL, got %s", orders[0].Side)
 	}
 }
