@@ -8,6 +8,7 @@ import (
 )
 
 // SecretConfig matches the structure of secrets/demo.yaml and real.yaml
+// SecretConfig matches the structure of secrets/demo.yaml and real.yaml
 type SecretConfig struct {
 	API struct {
 		Bitget struct {

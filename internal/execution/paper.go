@@ -144,8 +144,14 @@ func (p *PaperExecution) ExecuteOrder(ctx context.Context, order domain.Order) e
 	return nil
 }
 
-// CancelOrder cancels an unfilled order.
-func (p *PaperExecution) CancelOrder(ctx context.Context, orderID string) error {
+// Close implements Execution interface.
+func (p *PaperExecution) Close() error {
+	// Nothing to wipe in Paper mode
+	return nil
+}
+
+// CancelOrder cancels an active order in the virtual simulation.
+func (p *PaperExecution) CancelOrder(ctx context.Context, orderID string, symbol string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -159,7 +165,7 @@ func (p *PaperExecution) CancelOrder(ctx context.Context, orderID string) error 
 	}
 
 	order.Status = "CANCELED"
-	slog.Info("PAPER EXECUTION: Order Canceled", slog.String("id", orderID))
+	slog.Info("PAPER EXECUTION: Order Canceled", slog.String("id", orderID), slog.String("symbol", symbol)) // Add symbol log
 	return nil
 }
 

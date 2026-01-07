@@ -76,11 +76,18 @@ graph LR
 *   **MockExecution**: MVP 단계에서의 안전한 테스트 실행기.
 *   **PaperExecution**: 가상 잔고로 전략 검증.
 
-### 5. `internal/infra` (Advanced)
+### 5. SEC: ESSENTIAL HYGIENE
+*   **Keys**: `[]byte` storage. Wipe on Exit (`defer`).
+*   **Net**: Retry + Timeout (Context). Simple Error Logging.
+*   **Git**: Pre-commit Hook (Strictly Block `secrets/`).
+
+### 6. OBS: LEAN METRICS
+
+### 7. `internal/infra` (Advanced)
 *   **Circuit Breaker**: 외부 API 장애 자동 격리.
 *   **Metrics**: Atomic Counter 기반 경량 모니터링.
 
-### 6. `internal/storage` (Persistence)
+### 8. `internal/storage` (Persistence)
 *   **WAL**: 이벤트 로깅 및 복구.
 *   **Snapshot**: 빠른 상태 복원.
 
@@ -106,3 +113,8 @@ go run cmd/app/main.go
 ---
 
 *Created by Indie Quant Team based on Deterministic Architecture.*
+
+
+
+
+

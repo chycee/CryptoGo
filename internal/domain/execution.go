@@ -9,5 +9,8 @@ type Execution interface {
 	ExecuteOrder(ctx context.Context, order Order) error
 
 	// CancelOrder cancels an existing order.
-	CancelOrder(ctx context.Context, orderID string) error
+	CancelOrder(ctx context.Context, orderID string, symbol string) error
+
+	// Close cleans up resources and wipes secrets.
+	Close() error
 }

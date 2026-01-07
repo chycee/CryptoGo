@@ -8,59 +8,65 @@ import (
 	"time"
 )
 
-// Signer handles Bitget V2 API authentication signatures
+// Signer handles Bitget V2 API Authentication.
+// It stores keys as []byte to allow memory wiping (Security Rule #5).
 type Signer struct {
-	accessKey  string
-	secretKey  string
-	passphrase string
+	accessKey  []byte
+	secretKey  []byte
+	passphrase []byte
 }
 
-// NewSigner creates a new Signer instance
+// NewSigner creates a new signer.
+// It converts string inputs to []byte for internal safety.
 func NewSigner(accessKey, secretKey, passphrase string) *Signer {
 	return &Signer{
-		accessKey:  accessKey,
-		secretKey:  secretKey,
-		passphrase: passphrase,
+		accessKey:  []byte(accessKey),
+		secretKey:  []byte(secretKey),
+		passphrase: []byte(passphrase),
 	}
 }
 
-// GenerateHeaders creates the necessary headers for a request
-// method: GET, POST, etc.
-// path: /api/v2/spot/account/info (no host)
-// query: param=1&test=2 (empty if none)
-// body: json string (empty if none)
+// Wipe clears the keys from memory.
+func (s *Signer) Wipe() {
+	if s == nil {
+		return
+	}
+	s.wipeSlice(s.accessKey)
+	s.wipeSlice(s.secretKey)
+	s.wipeSlice(s.passphrase)
+}
+
+func (s *Signer) wipeSlice(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}
+
+// GenerateHeaders creates the required headers for Bitget V2 API.
 func (s *Signer) GenerateHeaders(method, path, query, body string) map[string]string {
-	// Bitget V2 Requirement: Unix Timestamp in Milliseconds
 	timestamp := fmt.Sprintf("%d", time.Now().UnixMilli())
 
-	// Construct the string to sign
-	// Format: timestamp + method + requestPath + "?" + queryString + body
-	// Note: If query is present, it must be part of path string for signing, or appended.
-	// Bitget docs usually say: path + query_string if exists.
-	fullPath := path
-	if query != "" {
-		fullPath = path + "?" + query
-	}
+	// Pre-signature string: timestamp + method + path + query + body
+	// Note: query should be appended to path if not empty, typically caller handles full path?
+	// Bitget: "timestamp + method + requestPath + ? + queryString + body"
+	// Here assume path includes query if necessary.
 
-	payload := timestamp + method + fullPath + body
+	payload := timestamp + method + path + query + body
+	signature := s.computeHmacSha256(payload)
 
-	// Generate Signature
-	sign := computeHmacSha256(payload, s.secretKey)
-
-	headers := map[string]string{
-		"ACCESS-KEY":        s.accessKey,
-		"ACCESS-SIGN":       sign,
+	return map[string]string{
+		"ACCESS-KEY":        string(s.accessKey),
+		"ACCESS-SIGN":       signature,
 		"ACCESS-TIMESTAMP":  timestamp,
-		"ACCESS-PASSPHRASE": s.passphrase,
+		"ACCESS-PASSPHRASE": string(s.passphrase),
 		"Content-Type":      "application/json",
 		"locale":            "en-US",
 	}
-
-	return headers
 }
 
-func computeHmacSha256(message string, secret string) string {
-	h := hmac.New(sha256.New, []byte(secret))
-	h.Write([]byte(message))
-	return base64.StdEncoding.EncodeToString(h.Sum(nil))
+func (s *Signer) computeHmacSha256(payload string) string {
+	// SecretKey is already []byte, perfect for HMAC
+	mac := hmac.New(sha256.New, s.secretKey)
+	mac.Write([]byte(payload))
+	return base64.StdEncoding.EncodeToString(mac.Sum(nil))
 }

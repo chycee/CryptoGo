@@ -99,15 +99,19 @@ func NewRealExecution(client *bitget.Client) *RealExecution {
 	return &RealExecution{client: client}
 }
 
-// Implement ExecuteOrder interface (Skeleton)
+// Implement ExecuteOrder interface (Skeleton -> Real)
 func (e *RealExecution) ExecuteOrder(ctx context.Context, order domain.Order) error {
-	slog.Info("Sending Order to Exchange", "symbol", order.Symbol, "qty", order.QtySats)
-	// TODO: e.client.PlaceOrder(order)
-	return nil
+	slog.Info("🚀 Sending Real/Testnet Order", "symbol", order.Symbol, "qty", order.QtySats, "price", order.PriceMicros)
+	return e.client.PlaceOrder(ctx, order)
 }
 
-// Implement CancelOrder interface (Skeleton)
-func (e *RealExecution) CancelOrder(ctx context.Context, orderID string) error {
-	// TODO: e.client.CancelOrder(orderID)
-	return nil
+// Implement CancelOrder interface (Skeleton -> Real)
+func (e *RealExecution) CancelOrder(ctx context.Context, orderID string, symbol string) error {
+	slog.Info("🗑️ Canceling Real/Testnet Order", "oid", orderID, "symbol", symbol)
+	return e.client.CancelOrder(ctx, orderID, symbol)
+}
+
+// Close cleans up resources.
+func (e *RealExecution) Close() error {
+	return e.client.Close()
 }

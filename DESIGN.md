@@ -128,6 +128,7 @@ type MarketState struct {
 | **Replay** | `ReplayEvent` | 라이브 코드와 리플레이 코드는 **비트 단위**로 동일해야 함. |
 | **Fuzz** | `pkg/safe/*_fuzz_test.go` | 예상치 못한 입력값(MaxInt 등)에 대한 안정성 검증. |
 | **Race** | `go test -race` | 동시성 버그(Race Condition) 자동 감지. |
+| **Git** | `hooks/pre-commit` | `secrets/` 등 민감 파일 커밋 원천 차단 (Automated Hygiene). |
 
 ---
 
