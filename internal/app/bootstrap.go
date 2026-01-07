@@ -9,6 +9,10 @@ import (
 	"crypto_go/internal/infra"
 	"crypto_go/internal/storage"
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -45,12 +49,30 @@ func (b *Bootstrap) Initialize() error {
 	slog.SetDefault(logger)
 
 	// 3. Initialize EventStore (Single-Writer WAL DB)
-	evStore, err := storage.NewEventStore("cryptogo.db") // In real use, use getDBPath()
+	// STES: Data Isolation - data/{mode}/events.db
+	mode := strings.ToLower(cfg.Trading.Mode)
+	if mode == "" {
+		mode = "paper" // Default to paper if not set
+	}
+
+	dataDir := filepath.Join("data", mode)
+	logDir := filepath.Join("logs", mode)
+
+	// Ensure directories exist
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return fmt.Errorf("failed to create data dir: %w", err)
+	}
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return fmt.Errorf("failed to create log dir: %w", err)
+	}
+
+	dbPath := filepath.Join(dataDir, "events.db")
+	evStore, err := storage.NewEventStore(dbPath)
 	if err != nil {
 		return err
 	}
 	b.EventStore = evStore
-	slog.Info("✅ EventStore initialized (WAL-mode)")
+	slog.Info("✅ EventStore initialized (WAL-mode)", "path", dbPath, "mode", mode)
 
 	// 4. Initialize Icon Downloader
 	downloader, err := infra.NewIconDownloader()

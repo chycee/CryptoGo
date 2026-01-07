@@ -46,8 +46,20 @@ func (f *ExecutionFactory) CreateExecution() (domain.Execution, error) {
 	case ModeDemo:
 		// Demo Trading: Connect to Bitget Testnet
 		slog.Info("🔒 Connecting to Bitget DEMO (Testnet)")
-		// TODO: Load secrets/demo.yaml
-		// cfg := infra.LoadSecretConfig("secrets/demo.yaml")
+		secretCfg, err := infra.LoadSecretConfig("secrets/demo.yaml")
+		if err != nil {
+			return nil, fmt.Errorf("failed to load demo secrets: %w", err)
+		}
+
+		// Apply secrets to main config (in-memory only)
+		// Note: Ideally, we should pass separate config to client, but for now we mix it carefully
+		// Creating a copy of config or modifying it is tricky in shared pointer.
+		// Better approach: Pass keys directly to NewClient or update config struct.
+		// For STES, let's update the config object's API section specifically for this run.
+		f.config.API.Bitget.AccessKey = secretCfg.API.Bitget.AccessKey
+		f.config.API.Bitget.SecretKey = secretCfg.API.Bitget.SecretKey
+		f.config.API.Bitget.Passphrase = secretCfg.API.Bitget.Passphrase
+
 		client := bitget.NewClient(f.config, true) // true = Testnet
 		return NewRealExecution(client), nil
 
@@ -60,7 +72,15 @@ func (f *ExecutionFactory) CreateExecution() (domain.Execution, error) {
 		}
 
 		slog.Info("🚨🚨🚨 Connecting to Bitget REAL (Mainnet) 🚨🚨🚨")
-		// TODO: Load secrets/real.yaml
+		secretCfg, err := infra.LoadSecretConfig("secrets/real.yaml")
+		if err != nil {
+			return nil, fmt.Errorf("failed to load real secrets: %w", err)
+		}
+
+		f.config.API.Bitget.AccessKey = secretCfg.API.Bitget.AccessKey
+		f.config.API.Bitget.SecretKey = secretCfg.API.Bitget.SecretKey
+		f.config.API.Bitget.Passphrase = secretCfg.API.Bitget.Passphrase
+
 		client := bitget.NewClient(f.config, false) // false = Mainnet
 		return NewRealExecution(client), nil
 
