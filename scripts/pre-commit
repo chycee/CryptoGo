@@ -1,0 +1,23 @@
+#!/bin/sh
+# CryptoGo Pre-commit Hook
+# Prevents committing sensitive files in secrets/
+
+echo "🔒 Running Pre-commit Security Check..."
+
+# Check for sensitive files in the staging area (Exclude Deletions)
+FILES=$(git diff --diff-filter=ACMR --cached --name-only)
+FORBIDDEN="secrets/"
+
+for file in $FILES; do
+    case $file in
+        $FORBIDDEN*)
+            echo "❌ COMMIT REJECTED: Attempting to commit sensitive file: $file"
+            echo "   Please remove it from staging: git reset HEAD $file"
+            echo "   And verify .gitignore."
+            exit 1
+            ;;
+    esac
+done
+
+echo "✅ Security Check Passed."
+exit 0

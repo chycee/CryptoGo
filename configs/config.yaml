@@ -1,0 +1,56 @@
+# 🚀 CryptoMonitor Configuration
+# 이 파일은 Git에 의해 추적됩니다. 
+# 공개 API 전용으로 사용할 경우 이대로 사용하시면 되며,
+# API Key 등 민감한 정보가 필요한 경우 본 파일에 직접 입력하기보다 
+# 환경 변수(Environment Variables)를 통한 주입을 권장합니다.
+# (예: CRYPTO_UPBIT_KEY, CRYPTO_BITGET_KEY 등)
+
+app:
+  name: "Crypto Go"
+  version: "1.0.1-dev"
+  updated_at: "2026-01-07"
+
+trading:
+  # REAL: 실전 (Requires Safety Latch)
+  # DEMO: 비트겟 테스트넷 (Validation)
+  # PAPER: 내부 시뮬레이션 (Default)
+  mode: "PAPER"
+
+api:
+  upbit:
+    ws_url: "wss://api.upbit.com/websocket/v1"
+    rest_url: "https://api.upbit.com"
+    # 공개 시세 조회 시 비워두셔도 됩니다.
+    access_key: ""
+    secret_key: ""
+    # 관찰할 심볼 목록 (KRW- 생략)
+    symbols: ["BTC", "ETH", "XRP", "SOL", "DOGE"]
+  
+  bitget:
+    ws_url: "wss://ws.bitget.com/v2/ws/public"
+    rest_url: "https://api.bitget.com"
+    # 공개 시세 조회 시 비워두셔도 됩니다.
+    access_key: ""
+    secret_key: ""
+    passphrase: ""
+    # 관찰할 심볼 매핑 (통합 기호: 비트겟 InstID)
+    symbols:
+      BTC: "BTCUSDT"
+      ETH: "ETHUSDT"
+      XRP: "XRPUSDT"
+      SOL: "SOLUSDT"
+      DOGE: "DOGEUSDT"
+  
+  exchange_rate:
+    # USD/KRW 환율 API (Provider 교체 가능)
+    url: "https://query1.finance.yahoo.com/v8/finance/chart/KRW=X"
+    poll_interval_sec: 60
+
+ui:
+  update_interval_ms: 100
+  history_days: 10
+  gap_threshold: 5000000 # 5 KRW in Micros
+  theme: "dark"
+
+logging:
+  level: "info"
