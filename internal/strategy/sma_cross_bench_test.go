@@ -13,12 +13,13 @@ func BenchmarkSMACrossStrategy_OnMarketUpdate(b *testing.B) {
 	strat := strategy.NewSMACrossStrategy("BTC", 20, 50)
 
 	// Pre-fill buffer to reach steady state
+	out := make([]domain.Order, 1)
 	for i := 0; i < 50; i++ {
 		state := domain.MarketState{
 			Symbol:      "BTC",
 			PriceMicros: quant.PriceMicros(50000000000 + int64(i*1000)),
 		}
-		strat.OnMarketUpdate(state)
+		strat.OnMarketUpdate(state, out)
 	}
 
 	state := domain.MarketState{
@@ -31,12 +32,13 @@ func BenchmarkSMACrossStrategy_OnMarketUpdate(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		state.PriceMicros = quant.PriceMicros(50000000000 + int64(i%10000)*1000)
-		strat.OnMarketUpdate(state)
+		strat.OnMarketUpdate(state, out)
 	}
 }
 
 // BenchmarkSMACrossStrategy_ColdStart measures strategy initialization overhead.
 func BenchmarkSMACrossStrategy_ColdStart(b *testing.B) {
+	out := make([]domain.Order, 1)
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
@@ -45,6 +47,6 @@ func BenchmarkSMACrossStrategy_ColdStart(b *testing.B) {
 			Symbol:      "BTC",
 			PriceMicros: quant.PriceMicros(50000000000),
 		}
-		strat.OnMarketUpdate(state)
+		strat.OnMarketUpdate(state, out)
 	}
 }

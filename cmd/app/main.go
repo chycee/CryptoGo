@@ -98,7 +98,7 @@ func main() {
 		slog.InfoContext(ctx, "✅ BitgetFuturesWorker started")
 	}
 
-	slog.InfoContext(ctx, "✨ Indie Quant System fully operational. Press Ctrl+C to exit.")
+	slog.InfoContext(ctx, "✨ Quant System fully operational. Press Ctrl+C to exit.")
 
 	// Wait for shutdown signal
 	<-ctx.Done()

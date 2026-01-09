@@ -7,20 +7,20 @@ import (
 
 // SMACrossStrategy implements a simple SMA Crossover strategy.
 // It is stateful and deterministic.
-// OPTIMIZED: Uses a Ring Buffer to ensure Zero-Alloc in the hotpath.
+// OPTIMIZED: Uses a Ring Buffer and field alignment for Zero-Alloc Hotpath & Cache Efficiency.
 type SMACrossStrategy struct {
+	// 64-bit fields grouped for alignment (Rule #3: Cache-Line Friendly)
+	sum          int64
+	prevShortSMA int64
+	prevLongSMA  int64
+	prices       []int64
+
+	// Metadata and pointers
 	symbol      string
 	shortPeriod int
 	longPeriod  int
-
-	// State (Ring Buffer)
-	prices []int64
-	head   int   // Current write position
-	count  int   // Number of elements filled
-	sum    int64 // Running sum for the longest period (optimization)
-
-	prevShortSMA int64
-	prevLongSMA  int64
+	head        int
+	count       int
 }
 
 // NewSMACrossStrategy creates a new instance.
@@ -32,18 +32,16 @@ func NewSMACrossStrategy(symbol string, shortPeriod, longPeriod int) *SMACrossSt
 		symbol:      symbol,
 		shortPeriod: shortPeriod,
 		longPeriod:  longPeriod,
-		prices:      make([]int64, longPeriod), // Fixed size allocation
-		head:        0,
-		count:       0,
-		sum:         0,
+		prices:      make([]int64, longPeriod), // Fixed size allocation during init
 	}
 }
 
 // OnMarketUpdate processes market updates and generates signals.
-func (s *SMACrossStrategy) OnMarketUpdate(state domain.MarketState) []domain.Order {
+// Zero-Alloc: Populates the 'out' buffer instead of returning a new slice.
+func (s *SMACrossStrategy) OnMarketUpdate(state domain.MarketState, out []domain.Order) int {
 	// 1. Filter by symbol
 	if state.Symbol != s.symbol {
-		return nil
+		return 0
 	}
 
 	currentPrice := int64(state.PriceMicros)
@@ -69,7 +67,7 @@ func (s *SMACrossStrategy) OnMarketUpdate(state domain.MarketState) []domain.Ord
 
 	// 3. Check if we have enough data
 	if s.count < s.longPeriod {
-		return nil
+		return 0
 	}
 
 	// 4. Calculate SMAs
@@ -79,32 +77,38 @@ func (s *SMACrossStrategy) OnMarketUpdate(state domain.MarketState) []domain.Ord
 	// Short SMA requires manual calculation over the ring buffer
 	currShortSMA := s.calculateShortSMA()
 
-	var orders []domain.Order
+	signalCount := 0
 
 	// 5. Check for Cross
 	if s.prevShortSMA != 0 && s.prevLongSMA != 0 {
 		// Golden Cross: Short goes above Long -> BUY
 		if s.prevShortSMA <= s.prevLongSMA && currShortSMA > currLongSMA {
-			orders = append(orders, domain.Order{
-				Symbol:      s.symbol,
-				Side:        "BUY",
-				Type:        "MARKET",
-				PriceMicros: int64(state.PriceMicros), // Market order doesn't strictly need price, but good for reference
-				QtySats:     10000,                    // Hardcoded for MVP
-				Status:      "NEW",
-			})
+			if signalCount < len(out) {
+				out[signalCount] = domain.Order{
+					Symbol:      s.symbol,
+					Side:        "BUY",
+					Type:        "MARKET",
+					PriceMicros: currentPrice, // Market order doesn't strictly need price, but good for reference
+					QtySats:     10000,        // Hardcoded for MVP
+					Status:      "NEW",
+				}
+				signalCount++
+			}
 		}
 
 		// Dead Cross: Short goes below Long -> SELL
 		if s.prevShortSMA >= s.prevLongSMA && currShortSMA < currLongSMA {
-			orders = append(orders, domain.Order{
-				Symbol:      s.symbol,
-				Side:        "SELL",
-				Type:        "MARKET",
-				PriceMicros: int64(state.PriceMicros),
-				QtySats:     10000,
-				Status:      "NEW",
-			})
+			if signalCount < len(out) {
+				out[signalCount] = domain.Order{
+					Symbol:      s.symbol,
+					Side:        "SELL",
+					Type:        "MARKET",
+					PriceMicros: currentPrice,
+					QtySats:     10000,
+					Status:      "NEW",
+				}
+				signalCount++
+			}
 		}
 	}
 
@@ -112,7 +116,7 @@ func (s *SMACrossStrategy) OnMarketUpdate(state domain.MarketState) []domain.Ord
 	s.prevShortSMA = currShortSMA
 	s.prevLongSMA = currLongSMA
 
-	return orders
+	return signalCount
 }
 
 // OnOrderUpdate handles order updates (Empty for now)

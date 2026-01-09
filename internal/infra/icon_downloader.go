@@ -1,11 +1,11 @@
 package infra
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -66,7 +66,13 @@ func (d *IconDownloader) DownloadIcon(symbol string) (string, error) {
 	// Construct URL (Using Upbit CDN - best coverage for Korean exchanges)
 	url := fmt.Sprintf("https://static.upbit.com/logos/%s.png", strings.ToUpper(symbol))
 
-	resp, err := d.client.Get(url)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", GetUserAgent())
+
+	resp, err := d.client.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -99,23 +105,9 @@ func (d *IconDownloader) GetIconPath(symbol string) string {
 }
 
 func getAssetsPath() (string, error) {
-	var configDir string
-	var err error
-
-	if runtime.GOOS == "windows" {
-		configDir = os.Getenv("LOCALAPPDATA")
-		if configDir == "" {
-			configDir, err = os.UserConfigDir()
-		}
-	} else {
-		configDir, err = os.UserConfigDir()
-	}
-
-	if err != nil {
-		return "", err
-	}
-
-	return filepath.Join(configDir, "CryptoGo", "assets", "icons"), nil
+	// Dynamically resolve base directory (Portable or OS-Standard)
+	base := GetWorkspaceDir()
+	return filepath.Join(base, "data", "icons"), nil
 }
 
 func sanitizeSymbol(symbol string) string {

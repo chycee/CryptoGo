@@ -3,14 +3,56 @@ package infra
 import (
 	"fmt"
 	"os"
+	"runtime"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
 
-const (
-	// DefaultUserAgent is a browser-like user agent string to avoid bot detection
-	DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+var (
+	// currentUserAgent is protected by a mutex to allow dynamic synchronization from UI/WebView
+	uaMu             sync.RWMutex
+	currentUserAgent = GetPlatformUserAgent() // Initialize with OS-appropriate string
 )
+
+// GetUserAgent returns the current active User-Agent string. (Thread-safe)
+func GetUserAgent() string {
+	uaMu.RLock()
+	defer uaMu.RUnlock()
+	return currentUserAgent
+}
+
+// SetUserAgent updates the global User-Agent string. (Thread-safe)
+// Used by GUI/Wails to sync the actual WebView User-Agent.
+func SetUserAgent(ua string) {
+	uaMu.Lock()
+	defer uaMu.Unlock()
+	currentUserAgent = ua
+}
+
+// GetPlatformUserAgent generates a browser-like User-Agent string based on current OS.
+func GetPlatformUserAgent() string {
+	chromeVer := "120.0.0.0" // Standard stable version
+	os := runtime.GOOS
+	arch := runtime.GOARCH
+
+	switch os {
+	case "windows":
+		return fmt.Sprintf("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%s Safari/537.36", chromeVer)
+	case "linux":
+		// Map arch to common Linux UA strings
+		linuxArch := "x86_64"
+		if arch == "arm64" {
+			linuxArch = "aarch64"
+		}
+		return fmt.Sprintf("Mozilla/5.0 (X11; Linux %s) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%s Safari/537.36", linuxArch, chromeVer)
+	case "darwin":
+		return fmt.Sprintf("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%s Safari/537.36", chromeVer)
+	default:
+		// Fallback
+		return "Mozilla/5.0 (compatible; Quant/1.0; +https://github.com/user/cryptoGo)"
+	}
+}
 
 // Config는 애플리케이션의 모든 설정을 담습니다.
 // LoadConfig로 로드된 후에 환경 변수를 통해 민감 내용을 덮어씁니다.
@@ -109,7 +151,17 @@ func hasPrefix(s, prefix string) bool {
 }
 
 // overrideWithEnv는 환경 변수가 존재할 경우 설정 값을 덮어씁니다.
+// Rule #5: 환경 변수는 설정 파일보다 우선합니다 (보안 강화).
 func overrideWithEnv(cfg *Config) {
+	// Security Warning: Log if secrets found in config file
+	if cfg.API.Bitget.SecretKey != "" || cfg.API.Upbit.SecretKey != "" {
+		// Using fmt instead of slog to avoid import cycle
+		fmt.Println("⚠️  SECURITY WARNING: API secrets found in config file.")
+		fmt.Println("   Recommendation: Use environment variables instead:")
+		fmt.Println("   - CRYPTO_BITGET_KEY, CRYPTO_BITGET_SECRET, CRYPTO_BITGET_PASSPHRASE")
+		fmt.Println("   - CRYPTO_UPBIT_KEY, CRYPTO_UPBIT_SECRET")
+	}
+
 	if key := os.Getenv("CRYPTO_UPBIT_KEY"); key != "" {
 		cfg.API.Upbit.AccessKey = key
 	}

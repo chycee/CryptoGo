@@ -7,10 +7,10 @@ type Order struct {
 	Symbol       string
 	Side         string // "BUY", "SELL"
 	Type         string // "LIMIT", "MARKET"
-	PriceMicros  int64  // Limit Price in Micros. 0 for Market Order.
-	QtySats      int64  // Order Quantity in Satoshis.
+	PriceMicros  int64  `json:"price,string"` // Limit Price in Micros. 0 for Market Order.
+	QtySats      int64  `json:"qty,string"`   // Order Quantity in Satoshis.
 	Status       string // "NEW", "PARTIALLY_FILLED", "FILLED", "CANCELED"
-	CreatedUnixM int64  // Unix Microseconds
+	CreatedUnixM int64  `json:"created_at,string"` // Unix Microseconds
 }
 
 const (

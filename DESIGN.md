@@ -1,6 +1,6 @@
-# CryptoGo: Indie Quant Architecture & Logic Reference
+# CryptoGo: Quant Architecture & Logic Reference
 
-**Role**: Indie Quant Developer (Deterministic, Agile, Pragmatic).  
+**Role**: Quant Developer (Deterministic, Agile, Pragmatic).  
 **MINDSET**: "Backtest is Reality." / "Complexity is the Enemy." / "Fail Fast."
 
 ---
@@ -108,65 +108,38 @@ type MarketState struct {
 
 ---
 
-## 5. EVENT SYSTEM (Source of Truth)
+---
 
-### `internal/event`
-모든 상태 변경은 '이벤트'를 통해서만 이루어짐.
+## 5. DECISION MANAGEMENT (Standard Hygiene)
 
-*   **Interface**: `Event` (`GetSeq()`, `GetTs()`, `GetType()`)
-*   **Types**:
-    *   `EvMarketUpdate`: 가격/수량 변동.
-    *   `EvOrderUpdate`: 주문 체결/취소/접수.
-    *   `EvSystemHalt`: 시스템 긴급 정지.
+### [Implementation Detail] ADR (Architecture Decision Records)
+*   프로젝트의 중요한 설계 결정은 `docs/adr/*.md`에 기록됩니다.
+*   **포맷**: Context(현황 및 배경), Decision(결정 내역), Consequences(결과 및 영향)를 포함.
+*   **보존**: 결정의 '이유'를 깃 히스토리와 함께 보존하여, 기술 부채를 방지하고 "Quant" 철학을 유지합니다.
+
+### [Implementation Detail] Workspace Separation (`_workspace/`)
+*   **Isolation**: 소스코드(`cmd`, `internal`)와 런타임 데이터(`secrets`, `data`, `logs`)를 폴더 수준에서 완전히 격리.
+*   **Security**: `.gitignore`에 `_workspace/` 하나만 등록하여 하위 모든 파일의 외부 유출 방지. 만약의 실수(`git add .`)를 막는 물리적 방어선.
+*   **Reproducibility**: `_workspace` 내의 모든 환경 파일은 팀 내에서 공유되는 템플릿(`configs/`)을 통해 재현.
 
 ---
 
-## 6. TEST Principles
-
-| Rule | Implementation | Rationale |
-|------|---------------|-----------|
-| **Replay** | `ReplayEvent` | 라이브 코드와 리플레이 코드는 **비트 단위**로 동일해야 함. |
-| **Fuzz** | `pkg/safe/*_fuzz_test.go` | 예상치 못한 입력값(MaxInt 등)에 대한 안정성 검증. |
-| **Race** | `go test -race` | 동시성 버그(Race Condition) 자동 감지. |
-| **Git** | `hooks/pre-commit` | `secrets/` 등 민감 파일 커밋 원천 차단 (Automated Hygiene). |
-
----
-
-## 7. DONE Checklist
-
-| Component | Logic | Status |
-|-----------|-------|--------|
-| **Data** | SafeMath / Int64 Types | ✅ Implemented |
-| **Engine** | Single-Thread Sequencer | ✅ Implemented |
-| **Execution** | Provider Isolation (Upbit/Bitget/LS) | ✅ Implemented |
-| **Perf** | Event Pooling | ✅ Implemented |
-| **Strategy** | Interface / Zero-Alloc SMACross | ✅ Implemented |
-| **Domain** | MarketState / Balance Invariant | ✅ Implemented |
-| **Design** | Integrated Design Document | ✅ This File |
-
----
-
-## System Structure (Current)
+## 6. SYSTEM STRUCTURE (Current)
 ```
-pkg/
-├── quant/          # 정밀 금융 타입 (PriceMicros, QtySats)
-└── safe/           # Overflow-Panic 연산 (Fail-Fast)
-
-internal/
-├── domain/         # Entity (Order, Position, MarketState - Int64 Only)
-├── engine/         # Sequencer (WAL + Single Thread Logic)
-├── event/          # Event Definitions & Pooling (sync.Pool)
-├── strategy/       # 매매 전략 (OnMarketUpdate -> []Order)
-├── execution/      # 주문 집행 (SubmitOrder) & Mocking
-├── storage/        # Persistence (WAL)
-└── infra/          # Exchange Adapters (Provider Isolated)
-    ├── backoff.go  # Standard Exponential Backoff
-    ├── exchange_rate.go # USD/KRW Rate Source
-    ├── upbit/      # Upbit WebSocket Worker
-    └── bitget/     # Bitget Spot/Futures Worker (V2)
+/
+├── cmd/            # Entry Points (app, integration)
+├── internal/       # Core Logic
+│   ├── domain/     # Entity (Balance, MarketState)
+│   ├── engine/     # Sequencer (WAL + Single Thread)
+│   ├── strategy/   # Trading Logic
+│   ├── execution/  # Order Submission
+│   ├── event/      # Event Pooling
+│   └── infra/      # Exchange Adapters (Upbit/Bitget)
+├── pkg/            # Core Utilities (SafeMath, Quant)
+├── docs/           # Documentation (ADR)
+└── _workspace/     # [IGNORED] Local Runtime (Secrets, Data, Logs)
 ```
 
-**"복잡함은 적이다. 백테스트는 현실이다."**
 
 ---
 
@@ -194,7 +167,7 @@ internal/
 ### **2. Foundation: Automated Trading Structure (IMPLEMENTED)**
 *   **Structural Readiness**: 당장 매매는 안 하지만, 언제든 로직만 채우면 돌아가도록 설계.
 *   **Interface-First**:
-    *   `Strategy`: `OnMarketUpdate(State) -> []Order` (Pure Function)
+    *   `Strategy`: `OnMarketUpdate(state, outBuf) -> count` (Zero-Alloc Hotpath)
     *   `Execution`: `SubmitOrder(Order)` (Mock & Real Interface)
 *   **Why?**: "건축 도면(Interface) 없이 벽돌(Code)부터 쌓지 않는다."
 
@@ -205,8 +178,8 @@ internal/
 ### **Performance**
 | 기능 | 결과 |
 |------|------|
-| **Benchmark** | Hotpath 5.22 ns/op, **Zero-Alloc** |
-| **Metrics** | Atomic Counter 기반 경량 모니터링 |
+| **Benchmark** | Hotpath ~5 ns/op, **Zero-Alloc** (100% Pool/Buffer) |
+| **Optimization** | **Cache-Line Alignment** (Padding 0), **No Float** |
 
 ### **Reliability**
 | 기능 | 용도 |

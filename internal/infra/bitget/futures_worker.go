@@ -3,10 +3,6 @@ package bitget
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"log/slog"
-	"sync"
-	"time"
 
 	"crypto_go/internal/event"
 	"crypto_go/internal/infra"
@@ -15,151 +11,57 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// FuturesWorker handles Bitget Futures WebSocket
+// FuturesWorker handles Bitget Futures WebSocket using BaseWSWorker.
 type FuturesWorker struct {
-	symbols   map[string]string
-	inbox     chan<- event.Event
-	seq       *uint64
-	conn      *websocket.Conn
-	mu        sync.RWMutex
-	writeMu   sync.Mutex
-	connected bool
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	base    *infra.BaseWSWorker
+	symbols map[string]string
+	inbox   chan<- event.Event
+	seq     *uint64
 }
 
-// NewFuturesWorker factory
+// NewFuturesWorker factory.
 func NewFuturesWorker(symbols map[string]string, inbox chan<- event.Event, seq *uint64) *FuturesWorker {
-	return &FuturesWorker{
+	w := &FuturesWorker{
 		symbols: symbols,
 		inbox:   inbox,
 		seq:     seq,
 	}
+	w.base = infra.NewBaseWSWorker(w)
+	return w
 }
+
+func (w *FuturesWorker) ID() string     { return "BITGET_FUTURES" }
+func (w *FuturesWorker) GetURL() string { return futuresWSURL }
 
 func (w *FuturesWorker) Connect(ctx context.Context) error {
-	ctx, w.cancel = context.WithCancel(ctx)
-	w.wg.Add(1)
-	go w.connectionLoop(ctx)
+	w.base.Start(ctx)
 	return nil
 }
 
-func (w *FuturesWorker) connectionLoop(ctx context.Context) {
-	defer w.wg.Done()
-	retryCount := 0
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		if err := w.connect(ctx); err != nil {
-			slog.Warn("Bitget Futures connection failed", slog.Any("error", err), slog.Int("retry", retryCount))
-			retryCount++
-			if retryCount > maxRetries {
-				retryCount = 0
-			}
-			delay := infra.CalculateBackoff(retryCount)
-			time.Sleep(delay)
-		} else {
-			retryCount = 0
-			w.readLoop(ctx)
-		}
-	}
+func (w *FuturesWorker) Disconnect() {
+	w.base.Stop()
 }
 
-func (w *FuturesWorker) connect(ctx context.Context) error {
-	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
-	conn, _, err := dialer.DialContext(ctx, futuresWSURL, nil)
-	if err != nil {
-		return err
-	}
-
-	w.mu.Lock()
-	w.conn = conn
-	w.connected = true
-	w.mu.Unlock()
-
-	if err := w.subscribe(); err != nil {
-		w.closeConnection()
-		return err
-	}
-
-	go w.pingLoop(ctx)
-	slog.Info("Bitget Futures Connected")
-	return nil
-}
-
-func (w *FuturesWorker) subscribe() error {
+func (w *FuturesWorker) OnConnect(ctx context.Context, conn *websocket.Conn) error {
 	args := make([]subscribeArg, 0, len(w.symbols))
 	for _, id := range w.symbols {
 		// V2 API uses USDT-FUTURES
 		args = append(args, subscribeArg{InstType: "USDT-FUTURES", Channel: "ticker", InstId: id})
 	}
 	req := subscribeRequest{Op: "subscribe", Args: args}
-	b, err := json.Marshal(req)
-	if err != nil {
-		slog.Error("Failed to marshal subscribe request", slog.Any("error", err))
-		return err
-	}
-	return w.threadSafeWrite(websocket.TextMessage, b)
+	b, _ := json.Marshal(req)
+	return w.base.Write(websocket.TextMessage, b)
 }
 
-func (w *FuturesWorker) pingLoop(ctx context.Context) {
-	ticker := time.NewTicker(pingInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			w.threadSafeWrite(websocket.TextMessage, []byte("ping"))
-		}
+func (w *FuturesWorker) OnMessage(ctx context.Context, msg []byte) {
+	if string(msg) == "pong" {
+		return
 	}
-}
 
-func (w *FuturesWorker) threadSafeWrite(msgType int, data []byte) error {
-	w.writeMu.Lock()
-	defer w.writeMu.Unlock()
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	if w.conn == nil {
-		return fmt.Errorf("no conn")
-	}
-	return w.conn.WriteMessage(msgType, data)
-}
-
-func (w *FuturesWorker) readLoop(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		w.mu.RLock()
-		if w.conn == nil {
-			w.mu.RUnlock()
-			return
-		}
-		w.conn.SetReadDeadline(time.Now().Add(readTimeout))
-		w.mu.RUnlock()
-
-		_, msg, err := w.conn.ReadMessage()
-		if err != nil {
-			w.closeConnection()
-			return
-		}
-		if string(msg) == "pong" {
-			continue
-		}
-		w.handleMessage(msg)
-	}
-}
-
-func (w *FuturesWorker) handleMessage(msg []byte) {
 	var resp tickerResponse
-	json.Unmarshal(msg, &resp)
+	if err := json.Unmarshal(msg, &resp); err != nil {
+		return
+	}
 	if resp.Arg.Channel != "ticker" || resp.Data == nil {
 		return
 	}
@@ -178,7 +80,7 @@ func (w *FuturesWorker) handleMessage(msg []byte) {
 		ev.Symbol = symbol
 		ev.PriceMicros = quant.ToPriceMicrosStr(data.LastPr)
 		ev.QtySats = quant.ToQtySatsStr(data.Volume24h)
-		ev.Exchange = "BITGET_F"
+		ev.Exchange = "BITGET_FUTURES"
 
 		select {
 		case w.inbox <- ev:
@@ -188,6 +90,10 @@ func (w *FuturesWorker) handleMessage(msg []byte) {
 	}
 }
 
+func (w *FuturesWorker) OnPing(ctx context.Context, conn *websocket.Conn) error {
+	return w.base.Write(websocket.TextMessage, []byte("ping"))
+}
+
 func (w *FuturesWorker) findSymbol(instId string) string {
 	for s, id := range w.symbols {
 		if id == instId {
@@ -195,22 +101,4 @@ func (w *FuturesWorker) findSymbol(instId string) string {
 		}
 	}
 	return ""
-}
-
-func (w *FuturesWorker) closeConnection() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.conn != nil {
-		w.conn.Close()
-		w.conn = nil
-	}
-	w.connected = false
-}
-
-func (w *FuturesWorker) Disconnect() {
-	if w.cancel != nil {
-		w.cancel()
-	}
-	w.closeConnection()
-	w.wg.Wait()
 }

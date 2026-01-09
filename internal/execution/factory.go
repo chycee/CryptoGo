@@ -46,7 +46,7 @@ func (f *ExecutionFactory) CreateExecution() (domain.Execution, error) {
 	case ModeDemo:
 		// Demo Trading: Connect to Bitget Testnet
 		slog.Info("🔒 Connecting to Bitget DEMO (Testnet)")
-		secretCfg, err := infra.LoadSecretConfig("secrets/demo.yaml")
+		secretCfg, err := infra.LoadSecretConfig("_workspace/secrets/demo.yaml")
 		if err != nil {
 			return nil, fmt.Errorf("failed to load demo secrets: %w", err)
 		}
@@ -72,7 +72,7 @@ func (f *ExecutionFactory) CreateExecution() (domain.Execution, error) {
 		}
 
 		slog.Info("🚨🚨🚨 Connecting to Bitget REAL (Mainnet) 🚨🚨🚨")
-		secretCfg, err := infra.LoadSecretConfig("secrets/real.yaml")
+		secretCfg, err := infra.LoadSecretConfig("_workspace/secrets/real.yaml")
 		if err != nil {
 			return nil, fmt.Errorf("failed to load real secrets: %w", err)
 		}

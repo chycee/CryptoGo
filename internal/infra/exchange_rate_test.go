@@ -3,6 +3,7 @@ package infra
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,14 +15,17 @@ import (
 
 // Helper function to create mock response for exchange rate API
 func createMockRateResponse(price float64) rateAPIResponse {
+	priceStr := json.Number(fmt.Sprintf("%.2f", price))
+	prevStr := json.Number(fmt.Sprintf("%.2f", price-1.0))
+
 	return rateAPIResponse{
 		Chart: struct {
 			Result []struct {
 				Meta struct {
-					Currency           string  `json:"currency"`
-					Symbol             string  `json:"symbol"`
-					RegularMarketPrice float64 `json:"regularMarketPrice"`
-					PreviousClose      float64 `json:"previousClose"`
+					Currency           string      `json:"currency"`
+					Symbol             string      `json:"symbol"`
+					RegularMarketPrice json.Number `json:"regularMarketPrice"`
+					PreviousClose      json.Number `json:"previousClose"`
 				} `json:"meta"`
 			} `json:"result"`
 			Error *struct {
@@ -31,23 +35,23 @@ func createMockRateResponse(price float64) rateAPIResponse {
 		}{
 			Result: []struct {
 				Meta struct {
-					Currency           string  `json:"currency"`
-					Symbol             string  `json:"symbol"`
-					RegularMarketPrice float64 `json:"regularMarketPrice"`
-					PreviousClose      float64 `json:"previousClose"`
+					Currency           string      `json:"currency"`
+					Symbol             string      `json:"symbol"`
+					RegularMarketPrice json.Number `json:"regularMarketPrice"`
+					PreviousClose      json.Number `json:"previousClose"`
 				} `json:"meta"`
 			}{
 				{
 					Meta: struct {
-						Currency           string  `json:"currency"`
-						Symbol             string  `json:"symbol"`
-						RegularMarketPrice float64 `json:"regularMarketPrice"`
-						PreviousClose      float64 `json:"previousClose"`
+						Currency           string      `json:"currency"`
+						Symbol             string      `json:"symbol"`
+						RegularMarketPrice json.Number `json:"regularMarketPrice"`
+						PreviousClose      json.Number `json:"previousClose"`
 					}{
 						Currency:           "KRW",
 						Symbol:             "KRW=X",
-						RegularMarketPrice: price,
-						PreviousClose:      price - 1.0,
+						RegularMarketPrice: priceStr,
+						PreviousClose:      prevStr,
 					},
 				},
 			},

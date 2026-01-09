@@ -7,9 +7,9 @@ import "crypto_go/pkg/quant"
 // Moved from engine/sequencer.go to avoid circular dependency.
 type MarketState struct {
 	// Hot fields (frequently accessed together in the hotpath)
-	PriceMicros     quant.PriceMicros `json:"price"`
-	TotalQtySats    quant.QtySats     `json:"qty"`
-	LastUpdateUnixM quant.TimeStamp   `json:"last_update"`
+	PriceMicros     quant.PriceMicros `json:"price,string"`
+	TotalQtySats    quant.QtySats     `json:"qty,string"`
+	LastUpdateUnixM quant.TimeStamp   `json:"last_update,string"`
 	// Cold fields (less frequent access)
 	Symbol string `json:"symbol"`
 }

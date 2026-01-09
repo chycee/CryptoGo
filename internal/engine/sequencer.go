@@ -20,7 +20,9 @@ type Sequencer struct {
 	nextSeq uint64
 	store   *storage.EventStore
 
-	strategy strategy.Strategy
+	strategy    strategy.Strategy
+	orderBuf    [16]domain.Order    // Pre-allocated buffer for strategy results (Rule #3: Zero-Alloc)
+	balanceBook *domain.BalanceBook // Rule #8: Balance invariant enforcement
 
 	// Boundary: used to notify UI or other systems of state changes
 	onStateUpdate func(*domain.MarketState)
@@ -37,6 +39,7 @@ func NewSequencer(inboxSize int, store *storage.EventStore, strat strategy.Strat
 		store:         store,
 		strategy:      strat,
 		onStateUpdate: onUpdate,
+		balanceBook:   domain.NewBalanceBook(), // Rule #8: Invariant enforcement
 	}
 	return seq
 }
@@ -72,6 +75,9 @@ func (s *Sequencer) RecoverFromWAL(ctx context.Context) error {
 	for _, ev := range events {
 		s.ReplayEvent(ev)
 	}
+
+	// Rule #8: Verify balance invariants after replay
+	s.balanceBook.VerifyAll()
 
 	slog.Info("State recovered from WAL", slog.Uint64("next_seq", s.nextSeq))
 	return nil
@@ -125,7 +131,7 @@ func (s *Sequencer) Run(ctx context.Context) {
 		if r := recover(); r != nil {
 			slog.Error("CRITICAL_PANIC_DETECTED", slog.Any("panic", r))
 			s.DumpState("panic_dump.json")
-			// In Indie Quant, we halt after dump.
+			// In Quant, we halt after dump.
 			panic(fmt.Sprintf("HALTED: %v", r))
 		}
 	}()
@@ -141,9 +147,25 @@ func (s *Sequencer) Run(ctx context.Context) {
 	}
 }
 
+// ReplayEvent processes an event synchronously without WAL logging.
+// This is used exclusively by the Replayer.
+func (s *Sequencer) ReplayEvent(ev event.Event) {
+	if ev.GetSeq() != s.nextSeq {
+		panic(fmt.Sprintf("REPLAY_GAP_DETECTED: expected %d, got %d", s.nextSeq, ev.GetSeq()))
+	}
+
+	switch e := ev.(type) {
+	case *event.MarketUpdateEvent:
+		s.handleMarketUpdate(e)
+	case *event.OrderUpdateEvent:
+		// Pending
+	}
+
+	s.nextSeq++
+}
+
 func (s *Sequencer) processEvent(ev event.Event) {
 	// 1. Sequence Gap Check (Halt Policy)
-	// 1. Sequence Gap Check (with Tolerance Policy)
 	s.ValidateSequence(ev.GetSeq())
 
 	// 2. WAL-first: Persistence
@@ -158,60 +180,49 @@ func (s *Sequencer) processEvent(ev event.Event) {
 	case *event.MarketUpdateEvent:
 		s.handleMarketUpdate(e)
 	case *event.OrderUpdateEvent:
-		// Pending: trading logic not yet implemented
-	default:
-		slog.Warn("Unknown event type", slog.Any("type", ev.GetType()))
+		// Pending
 	}
 
 	// 4. Increment Sequence
 	s.nextSeq++
 }
 
-// ReplayEvent processes an event synchronously without WAL logging.
-// This is used exclusively by the Replayer.
-func (s *Sequencer) ReplayEvent(ev event.Event) {
-	// Replay must still respect sequence order
-	if ev.GetSeq() != s.nextSeq {
-		panic(fmt.Sprintf("REPLAY_GAP_DETECTED: expected %d, got %d", s.nextSeq, ev.GetSeq()))
-	}
-
-	// Dispatch without WAL
-	switch e := ev.(type) {
-	case *event.MarketUpdateEvent:
-		s.handleMarketUpdate(e)
-	case *event.OrderUpdateEvent:
-		// Pending: trading logic not yet implemented
-	default:
-		slog.Warn("Unknown event type in replay", slog.Any("type", ev.GetType()))
-	}
-
-	s.nextSeq++
-}
-
 func (s *Sequencer) handleMarketUpdate(e *event.MarketUpdateEvent) {
 	state, ok := s.markets[e.Symbol]
 	if !ok {
+		// Cold path: New symbol allocation
 		state = &domain.MarketState{Symbol: e.Symbol}
 		s.markets[e.Symbol] = state
 	}
 
-	// Update state (No Mutex needed here as we are in the Hotpath)
+	// Hot path: No mutex (Single-threaded owner)
 	state.PriceMicros = e.PriceMicros
 	state.TotalQtySats = e.QtySats
 	state.LastUpdateUnixM = e.Ts
 
+	// Trace logging should be disabled or sampled in production (Rule #6: Lean Metrics)
+	// slog.Debug("HOT_INGEST", "symbol", e.Symbol, "price", e.PriceMicros)
+
 	// Invoke Strategy
 	if s.strategy != nil {
-		actions := s.strategy.OnMarketUpdate(*state)
-		for _, action := range actions {
-			slog.Info("STRATEGY_ACTION", slog.Any("action", action))
-			// TODO: Convert Action to OrderRequestEvent and process effectively
+		count := s.strategy.OnMarketUpdate(*state, s.orderBuf[:])
+		for i := 0; i < count; i++ {
+			s.handleStrategyAction(&s.orderBuf[i])
 		}
 	}
 
 	if s.onStateUpdate != nil {
-		s.onStateUpdate(state)
+		// Rule #2: Pass copy to external callback, not pointer (state ownership protection)
+		stateCopy := *state
+		s.onStateUpdate(&stateCopy)
 	}
+}
+
+func (s *Sequencer) handleStrategyAction(order *domain.Order) {
+	// Root of Rule #1: Deterministic order generation
+	// Rule #6: Hotpath logging removed. Use metrics or sampling if needed.
+
+	// TODO: Create OrderRequestEvent and dispatch to execution gateway
 }
 
 // GetMarketState returns a snapshot of the market state (external read).
@@ -230,12 +241,17 @@ func (s *Sequencer) GetMarketState(symbol string) (domain.MarketState, bool) {
 func (s *Sequencer) DumpState(filename string) {
 	slog.Info("Dumping internal state...", slog.String("file", filename))
 
+	// Rule #8: Verify balance invariants before dump (may panic if corrupted)
+	s.balanceBook.VerifyAll()
+
 	data := struct {
-		NextSeq uint64                         `json:"next_seq"`
-		Markets map[string]*domain.MarketState `json:"markets"`
+		NextSeq  uint64                         `json:"next_seq"`
+		Markets  map[string]*domain.MarketState `json:"markets"`
+		Balances map[string]domain.Balance      `json:"balances"`
 	}{
-		NextSeq: s.nextSeq,
-		Markets: s.markets,
+		NextSeq:  s.nextSeq,
+		Markets:  s.markets,
+		Balances: s.balanceBook.Snapshot(),
 	}
 
 	b, err := json.MarshalIndent(data, "", "  ")
@@ -248,4 +264,33 @@ func (s *Sequencer) DumpState(filename string) {
 	if err != nil {
 		slog.Error("Failed to write state dump", slog.Any("error", err))
 	}
+}
+
+// BalanceBook returns the balance book for external access (e.g., UI, testing).
+func (s *Sequencer) BalanceBook() *domain.BalanceBook {
+	return s.balanceBook
+}
+
+// GetNextSeq returns the next expected sequence number (for testing).
+func (s *Sequencer) GetNextSeq() uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.nextSeq
+}
+
+// GetMarketPrice returns the current price for an exchange+symbol (for testing).
+func (s *Sequencer) GetMarketPrice(exchange, symbol string) int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	key := exchange + ":" + symbol
+	if state, ok := s.markets[key]; ok {
+		return int64(state.PriceMicros)
+	}
+	return 0
+}
+
+// ProcessEventForTest processes an event synchronously for testing.
+// This bypasses the inbox channel for easier test control.
+func (s *Sequencer) ProcessEventForTest(ev event.Event) {
+	s.processEvent(ev)
 }

@@ -17,7 +17,9 @@ func TestSMACrossStrategy(t *testing.T) {
 			Symbol:      "BTC",
 			PriceMicros: quant.PriceMicros(price),
 		}
-		return strat.OnMarketUpdate(state)
+		out := make([]domain.Order, 1)
+		count := strat.OnMarketUpdate(state, out)
+		return out[:count]
 	}
 
 	// Sequence:

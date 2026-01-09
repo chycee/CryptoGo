@@ -1,5 +1,10 @@
 # 🚀 CryptoGo: Quant Framework
 
+![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)
+![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Tests](https://img.shields.io/badge/tests-passing-brightgreen)
+
 **CryptoGo**는 초고속 의사결정과 완벽한 검증(Backtest is Reality)을 목표로 하는 **Go 언어 기반의 결정론적(Deterministic) 퀀트 트레이딩 프레임워크**입니다.
 
 > **Current Status**: MVP Phase 1 (Monitoring Implemented / Trading Skeleton Ready)
@@ -68,20 +73,69 @@ graph LR
 *   **Common**: 지수 백오프(Exponential Backoff) 표준 적용.
 
 ### 3. `internal/strategy` (Logic)
-*   **Interface**: `OnMarketUpdate(State) -> []Order`
-*   **Reference**: `SMACrossStrategy` (Ring Buffer 최적화, Zero-Alloc).
+*   **Interface**: `OnMarketUpdate(state, outBuf) -> int` (Zero-Alloc).
+*   **Reference**: `SMACrossStrategy` (Ring Buffer 최적화, ~16ns/op).
 
 ### 4. `internal/execution` (Action)
 *   **Interface**: `SubmitOrder`, `CancelOrder`.
 *   **MockExecution**: MVP 단계에서의 안전한 테스트 실행기.
 *   **PaperExecution**: 가상 잔고로 전략 검증.
 
+### 1. 프로젝트 구조 (Structure)
+```
+/
+├── cmd/               # [UPLOAD] 실행 포인트 (app, integration)
+├── internal/          # [UPLOAD] 도메인 및 비즈니스 로직
+├── pkg/               # [UPLOAD] 공용 라이브러리 (SafeMath, Quant)
+├── configs/           # [UPLOAD] 설정 템플릿 (공개용)
+├── docs/              # [UPLOAD] 문서 (ADR, 설계도)
+├── scripts/           # [UPLOAD] 관리 스크립트 (Git Hooks 등)
+└── _workspace/        # [IGNORED] 로컬 실행 환경 (민감 데이터 격리)
+    ├── secrets/       # API Key (demo.yaml, real.yaml)
+    ├── data/          # SQLite DB (events.db)
+    └── logs/          # 애플리케이션 로그
+```
+
+### 2. 가동 준비 (Setup)
+1.  `_workspace/secrets` 폴더를 생성합니다. (이미 존재할 수 있음)
+2.  `secrets/demo.yaml` 등의 키 파일을 `_workspace/secrets`로 이동합니다.
+3.  `go run cmd/app/main.go` 실행 시 자동으로 `_workspace`가 활용됩니다.
+
 ### 5. SEC: ESSENTIAL HYGIENE
 *   **Keys**: `[]byte` storage. Wipe on Exit (`defer`).
 *   **Net**: Retry + Timeout (Context). Simple Error Logging.
-*   **Git**: Pre-commit Hook (Strictly Block `secrets/`).
+*   **Git Security**:
+    *   **Pre-commit Hook**: `_workspace/` 외의 경로에 비밀번호나 키가 포함되는 것을 원천 차단.
+    *   **Workspace Separation**: 소스코드와 런타임 데이터를 물리적으로 분리하여 실수에 의한 유출 방지.
 
 ### 6. OBS: LEAN METRICS
+*   **Latency**: p99 < 1ms 지향 (Hotpath ~5-15ns 수준).
+*   **Zero-Alloc**: 핫패스 내 힙 할당 **0 B/op** 달성.
+*   **Audit**: `_workspace/logs/app.log`에서 모든 패닉 및 예외 상황 추적 가능 (스택 트레이스 포함).
+
+### 10. Linux OS 실행 가이드
+우리 프로젝트는 플랫폼 독립적으로 설계되어 있어, Ubuntu, Fedora, Arch 등 다양한 리눅스 데스크탑 환경에서 완벽하게 작동합니다.
+
+#### 리눅스용 빌드 (Cross-Compile)
+윈도우 PowerShell에서 리눅스용 실행 파일(Native Binary)을 빌드합니다:
+```bash
+$env:GOOS="linux"; $env:GOARCH="amd64"; go build -o crypto-go-linux ./cmd/app/main.go
+```
+
+#### 실행 및 사용법 (How to Run)
+1.  빌드된 `crypto-go-linux` 파일을 리눅스 환경으로 복사합니다.
+2.  `_workspace/` 및 `configs/` 폴더를 같은 위치로 복사합니다. (설정 및 데이터 유지)
+3.  터미널(Terminal)을 열고 해당 폴더로 이동한 뒤 실행 권한을 부여하고 가동합니다:
+    ```bash
+    chmod +x crypto-go-linux
+    ./crypto-go-linux
+    ```
+
+> [!NOTE]
+> 데스크탑 사용자의 경우, 터미널에서 실행하면 실시간 로그와 명령 프롬프트를 통해 즉각적인 피드백을 확인할 수 있습니다.
+
+> [!TIP]
+> 우리 프로젝트는 **Pure Go SQLite** 드라이버를 사용하므로, 리눅스 환경에 추가적인 라이브러리(CGO 관련)를 설치할 필요가 전혀 없습니다.
 
 ### 7. `internal/infra` (Advanced)
 *   **Circuit Breaker**: 외부 API 장애 자동 격리.
@@ -112,7 +166,7 @@ go run cmd/app/main.go
 
 ---
 
-*Created by Indie Quant Team based on Deterministic Architecture.*
+*Created by Quant Team based on Deterministic Architecture.*
 
 
 

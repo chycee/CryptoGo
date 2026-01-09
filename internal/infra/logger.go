@@ -12,7 +12,7 @@ import (
 // NewLogger creates a new slog.Logger with log rotation support
 func NewLogger(cfg *Config) *slog.Logger {
 	// Create logs directory if not exists
-	logDir := "logs"
+	logDir := filepath.Join(GetWorkspaceDir(), "logs")
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		// Fallback to stderr if directory creation fails
 		return slog.New(slog.NewJSONHandler(os.Stderr, nil))

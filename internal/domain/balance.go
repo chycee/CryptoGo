@@ -9,9 +9,9 @@ import (
 // This is the core structure for Balance Invariant verification.
 type Balance struct {
 	Symbol       string `json:"symbol"`
-	AmountSats   int64  `json:"amount"`   // Current balance (Sats)
-	ReservedSats int64  `json:"reserved"` // Reserved for open orders
-	LastSeq      uint64 `json:"last_seq"` // Last event sequence that modified this
+	AmountSats   int64  `json:"amount,string"`   // Current balance (Sats)
+	ReservedSats int64  `json:"reserved,string"` // Reserved for open orders
+	LastSeq      uint64 `json:"last_seq"`        // Last event sequence that modified this
 }
 
 // AvailableSats returns the available balance (total - reserved).
@@ -125,7 +125,7 @@ func (bb *BalanceBook) CalculateTotalEquity(prices map[string]int64) int64 {
 		// 1. Get Price
 		price, ok := prices[symbol]
 		if !ok {
-			// If price missing, assume 0 or log warning? 
+			// If price missing, assume 0 or log warning?
 			// For safety (conservative), we skip value calculation for unknown assets.
 			continue
 		}
@@ -133,7 +133,7 @@ func (bb *BalanceBook) CalculateTotalEquity(prices map[string]int64) int64 {
 		// 2. Calculate Asset Value: (Amount + Reserved) * Price
 		// Note: AmountSats is the TOTAL.
 		assetValue := safe.SafeMul(balance.AmountSats, price)
-		
+
 		// 3. Accumulate
 		totalEquity = safe.SafeAdd(totalEquity, assetValue)
 	}

@@ -22,11 +22,12 @@ const (
 
 // Client for Bitget API (Spot & Futures/Mix)
 type Client struct {
-	httpClient *http.Client
-	baseURL    string
-	signer     *Signer
-	logger     *slog.Logger
-	isTestnet  bool // Indie Quant: Flag to enable "paptrading" header
+	httpClient     *http.Client
+	baseURL        string
+	signer         *Signer
+	logger         *slog.Logger
+	circuitBreaker *infra.CircuitBreaker // Rule #5: Fault isolation
+	isTestnet      bool                  // Quant: Flag to enable "paptrading" header
 }
 
 // NewClient creates a new Bitget API client.
@@ -46,11 +47,12 @@ func NewClient(cfg *infra.Config, isTestnet bool) *Client {
 	)
 
 	return &Client{
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-		baseURL:    baseURL,
-		signer:     signer, // Keep it unsafe string internally in Signer, wiped on Close
-		logger:     slog.With("module", "bitget_client"),
-		isTestnet:  isTestnet,
+		httpClient:     &http.Client{Timeout: 10 * time.Second},
+		baseURL:        baseURL,
+		signer:         signer,
+		logger:         slog.With("module", "bitget_client"),
+		circuitBreaker: infra.NewCircuitBreaker(infra.DefaultCircuitBreakerConfig("bitget-api")),
+		isTestnet:      isTestnet,
 	}
 }
 
@@ -76,8 +78,11 @@ type placeOrderRequest struct {
 }
 
 // PlaceOrder sends an order to the exchange (FUTURES V2).
-// Indie Quant: Inputs are strictly int64 types.
+// Quant: Inputs are strictly int64 types.
 func (c *Client) PlaceOrder(ctx context.Context, order domain.Order) error {
+	// Rate Limiting: Prevent IP ban (보안 강화)
+	infra.GetBitgetOrderLimiter().Wait()
+
 	// 1. Boundary Conversion
 	priceStr := fmt.Sprintf("%d.%06d", order.PriceMicros/1_000_000, order.PriceMicros%1_000_000)
 	// V2 Futures Size: Usually in "Base Coin" or "Contracts"?
@@ -126,6 +131,9 @@ func (c *Client) PlaceOrder(ctx context.Context, order domain.Order) error {
 
 // CancelOrder sends a cancel request (FUTURES V2).
 func (c *Client) CancelOrder(ctx context.Context, orderID string, symbol string) error {
+	// Rate Limiting: Prevent IP ban (보안 강화)
+	infra.GetBitgetOrderLimiter().Wait()
+
 	reqBody := map[string]string{
 		"symbol":      symbol,
 		"productType": "USDT-FUTURES",
@@ -148,6 +156,9 @@ func (c *Client) CancelOrder(ctx context.Context, orderID string, symbol string)
 
 // GetBalance fetches the available balance (FUTURES V2).
 func (c *Client) GetBalance(ctx context.Context, coin string) (int64, error) {
+	// Rate Limiting: Prevent IP ban (보안 강화)
+	infra.GetBitgetAccountLimiter().Wait()
+
 	// Path: /api/v2/mix/account/accounts?productType=USDT-FUTURES
 	path := "/api/v2/mix/account/accounts?productType=USDT-FUTURES"
 
@@ -213,8 +224,13 @@ func (c *Client) parseResponse(resp *http.Response) (json.RawMessage, error) {
 	return apiResp.Data, nil
 }
 
-// doRequest performs the HTTP request with checking error.
+// doRequest performs the HTTP request with circuit breaker protection.
 func (c *Client) doRequest(ctx context.Context, method, path string, payload interface{}) (*http.Response, error) {
+	// Circuit Breaker: Check if request is allowed (Rule #5: Fault isolation)
+	if !c.circuitBreaker.Allow() {
+		return nil, fmt.Errorf("circuit breaker open: bitget-api")
+	}
+
 	url := c.baseURL + path
 
 	var body io.Reader
@@ -237,8 +253,6 @@ func (c *Client) doRequest(ctx context.Context, method, path string, payload int
 	// 1. Generate Auth Headers
 	headers := c.signer.GenerateHeaders(method, path, "", bodyStr)
 	for k, v := range headers {
-		// Use direct assignment to attempt preservation of header case (ACCESS-KEY vs Access-Key)
-		// Go's http.Client usually canonicalizes, but this is the best shot without custom Transport.
 		req.Header[k] = []string{v}
 	}
 
@@ -247,6 +261,17 @@ func (c *Client) doRequest(ctx context.Context, method, path string, payload int
 		req.Header["paptrading"] = []string{"1"}
 	}
 
-	// 3. Execute
-	return c.httpClient.Do(req)
+	// 3. Add Browser-like User-Agent
+	req.Header.Set("User-Agent", infra.GetUserAgent())
+
+	// 4. Execute with Circuit Breaker recording
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		c.circuitBreaker.RecordFailure()
+		return nil, err
+	}
+
+	// Record success for successful HTTP response (even 4xx is "server responded")
+	c.circuitBreaker.RecordSuccess()
+	return resp, nil
 }

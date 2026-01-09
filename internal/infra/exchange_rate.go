@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"time"
 
@@ -19,10 +18,10 @@ type rateAPIResponse struct {
 	Chart struct {
 		Result []struct {
 			Meta struct {
-				Currency           string  `json:"currency"`
-				Symbol             string  `json:"symbol"`
-				RegularMarketPrice float64 `json:"regularMarketPrice"`
-				PreviousClose      float64 `json:"previousClose"`
+				Currency           string      `json:"currency"`
+				Symbol             string      `json:"symbol"`
+				RegularMarketPrice json.Number `json:"regularMarketPrice"`
+				PreviousClose      json.Number `json:"previousClose"`
 			} `json:"meta"`
 		} `json:"result"`
 		Error *struct {
@@ -35,14 +34,14 @@ type rateAPIResponse struct {
 // ExchangeRateClient fetches USD/KRW exchange rate from configured API.
 type ExchangeRateClient struct {
 	inbox        chan<- event.Event
-	nextSeq      *uint64 // Pointer to a shared/global atomic or managed sequence
+	nextSeq      *uint64
 	pollInterval time.Duration
 	apiURL       string
 	httpClient   *http.Client
 	cancel       context.CancelFunc
 }
 
-// NewExchangeRateClient creates a new exchange rate client
+// NewExchangeRateClient creates a new exchange rate client.
 func NewExchangeRateClient(inbox chan<- event.Event, seq *uint64) *ExchangeRateClient {
 	return &ExchangeRateClient{
 		inbox:        inbox,
@@ -55,7 +54,7 @@ func NewExchangeRateClient(inbox chan<- event.Event, seq *uint64) *ExchangeRateC
 	}
 }
 
-// NewExchangeRateClientWithConfig creates a client with custom configuration
+// NewExchangeRateClientWithConfig creates a client with custom configuration.
 func NewExchangeRateClientWithConfig(inbox chan<- event.Event, seq *uint64, apiURL string, pollIntervalSec int) *ExchangeRateClient {
 	client := NewExchangeRateClient(inbox, seq)
 	if apiURL != "" {
@@ -67,73 +66,45 @@ func NewExchangeRateClientWithConfig(inbox chan<- event.Event, seq *uint64, apiU
 	return client
 }
 
-// Start begins polling for exchange rate updates
+// Start begins polling for exchange rate updates.
 func (c *ExchangeRateClient) Start(ctx context.Context) error {
-	// Create a cancellable context
 	ctx, c.cancel = context.WithCancel(ctx)
-
-	// Fetch immediately on start
 	if err := c.fetchRate(ctx); err != nil {
-		slog.Warn("Initial exchange rate fetch failed", slog.Any("error", err))
-		// Continue anyway - will retry on next tick
+		fmt.Printf("Initial exchange rate fetch failed: %v\n", err)
 	}
 
-	// Start polling goroutine
 	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("Exchange rate polling panic recovered", slog.Any("panic", r))
-			}
-		}()
-
 		ticker := time.NewTicker(c.pollInterval)
 		defer ticker.Stop()
-
 		for {
 			select {
 			case <-ctx.Done():
-				slog.Info("Exchange rate polling stopped")
 				return
 			case <-ticker.C:
-				if err := c.fetchRate(ctx); err != nil {
-					slog.Warn("Exchange rate fetch failed", slog.Any("error", err))
-				}
+				c.fetchRate(ctx)
 			}
 		}
 	}()
-
 	return nil
 }
 
-// Stop cancels the polling context.
+// Stop cancels the polling.
 func (c *ExchangeRateClient) Stop() {
 	if c.cancel != nil {
 		c.cancel()
 	}
 }
 
-// fetchRate fetches the current exchange rate from configured API with retry logic
 func (c *ExchangeRateClient) fetchRate(ctx context.Context) error {
-	var lastErr error
 	for i := 0; i < 3; i++ {
 		if i > 0 {
-			delay := CalculateBackoff(i)
-			slog.Info("Retrying exchange rate fetch", slog.Int("attempt", i), slog.Duration("delay", delay))
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(delay):
-			}
+			time.Sleep(CalculateBackoff(i))
 		}
-
-		err := c.doFetch(ctx)
-		if err == nil {
+		if err := c.doFetch(ctx); err == nil {
 			return nil
 		}
-		lastErr = err
-		slog.Warn("Exchange rate fetch attempt failed", slog.Int("attempt", i+1), slog.Any("error", err))
 	}
-	return lastErr
+	return fmt.Errorf("all fetch attempts failed")
 }
 
 func (c *ExchangeRateClient) doFetch(ctx context.Context) error {
@@ -142,8 +113,7 @@ func (c *ExchangeRateClient) doFetch(ctx context.Context) error {
 		return err
 	}
 
-	// Add browser-like User-Agent to avoid bot detection
-	req.Header.Set("User-Agent", DefaultUserAgent)
+	req.Header.Set("User-Agent", GetUserAgent())
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -165,7 +135,6 @@ func (c *ExchangeRateClient) doFetch(ctx context.Context) error {
 		return err
 	}
 
-	// Check for API error
 	if data.Chart.Error != nil {
 		return fmt.Errorf("rate API error: %s - %s", data.Chart.Error.Code, data.Chart.Error.Description)
 	}
@@ -174,19 +143,22 @@ func (c *ExchangeRateClient) doFetch(ctx context.Context) error {
 		return fmt.Errorf("empty response from exchange rate API")
 	}
 
-	// Use regularMarketPrice as the exchange rate (USD/KRW)
-	price := quant.ToPriceMicros(data.Chart.Result[0].Meta.RegularMarketPrice)
+	// Rule #1: No Float. Use string conversion via json.Number
+	priceStr := data.Chart.Result[0].Meta.RegularMarketPrice.String()
 
-	// Emit event to sequencer
-	c.inbox <- &event.MarketUpdateEvent{
-		BaseEvent: event.BaseEvent{
-			Seq: quant.NextSeq(c.nextSeq),
-			Ts:  quant.TimeStamp(time.Now().UnixMicro()),
-		},
-		Symbol:      "USD/KRW",
-		PriceMicros: price,
-		QtySats:     quant.QtyScale, // 1.0 fixed for rate
-		Exchange:    "FX",
+	// Emit event using Pool (Rule #3: Zero-Alloc)
+	ev := event.AcquireMarketUpdateEvent()
+	ev.Seq = quant.NextSeq(c.nextSeq)
+	ev.Ts = quant.TimeStamp(time.Now().UnixMicro())
+	ev.Symbol = "USD/KRW"
+	ev.PriceMicros = quant.ToPriceMicrosStr(priceStr)
+	ev.QtySats = quant.QtyScale // 1.0 fixed as baseline for rate
+	ev.Exchange = "FX"
+
+	select {
+	case c.inbox <- ev:
+	default:
+		event.ReleaseMarketUpdateEvent(ev)
 	}
 
 	return nil

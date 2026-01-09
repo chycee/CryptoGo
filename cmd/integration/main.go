@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -21,7 +22,7 @@ func main() {
 	slog.Info("🚀 Starting Bitget Integration Test...")
 
 	// 2. Load Secret Config First (for explicit DEMO keys)
-	secretPath := "secrets/demo.yaml"
+	secretPath := filepath.Join(infra.GetWorkspaceDir(), "secrets", "demo.yaml")
 	slog.Info("🔑 Loading Secrets", "path", secretPath)
 
 	secretCfg, err := infra.LoadSecretConfig(secretPath)

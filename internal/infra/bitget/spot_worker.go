@@ -3,10 +3,6 @@ package bitget
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"log/slog"
-	"sync"
-	"time"
 
 	"crypto_go/internal/event"
 	"crypto_go/internal/infra"
@@ -15,151 +11,56 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// SpotWorker handles Bitget Spot WebSocket
+// SpotWorker handles Bitget Spot WebSocket using BaseWSWorker.
 type SpotWorker struct {
-	symbols   map[string]string
-	inbox     chan<- event.Event
-	seq       *uint64
-	conn      *websocket.Conn
-	mu        sync.RWMutex
-	writeMu   sync.Mutex
-	connected bool
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	base    *infra.BaseWSWorker
+	symbols map[string]string
+	inbox   chan<- event.Event
+	seq     *uint64
 }
 
-// NewSpotWorker factory
+// NewSpotWorker factory.
 func NewSpotWorker(symbols map[string]string, inbox chan<- event.Event, seq *uint64) *SpotWorker {
-	return &SpotWorker{
+	w := &SpotWorker{
 		symbols: symbols,
 		inbox:   inbox,
 		seq:     seq,
 	}
+	w.base = infra.NewBaseWSWorker(w)
+	return w
 }
+
+func (w *SpotWorker) ID() string     { return "BITGET_SPOT" }
+func (w *SpotWorker) GetURL() string { return spotWSURL }
 
 func (w *SpotWorker) Connect(ctx context.Context) error {
-	ctx, w.cancel = context.WithCancel(ctx)
-	w.wg.Add(1)
-	go w.connectionLoop(ctx)
+	w.base.Start(ctx)
 	return nil
 }
 
-func (w *SpotWorker) connectionLoop(ctx context.Context) {
-	defer w.wg.Done()
-	retryCount := 0
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		if err := w.connect(ctx); err != nil {
-			slog.Warn("Bitget Spot connection failed", slog.Any("error", err), slog.Int("retry", retryCount))
-			retryCount++
-			if retryCount > maxRetries {
-				retryCount = 0 // Infinite retry loop for monitoring
-			}
-			delay := infra.CalculateBackoff(retryCount)
-			time.Sleep(delay)
-		} else {
-			retryCount = 0
-			w.readLoop(ctx)
-		}
-	}
+func (w *SpotWorker) Disconnect() {
+	w.base.Stop()
 }
 
-func (w *SpotWorker) connect(ctx context.Context) error {
-	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
-	conn, _, err := dialer.DialContext(ctx, spotWSURL, nil)
-	if err != nil {
-		return err
-	}
-
-	w.mu.Lock()
-	w.conn = conn
-	w.connected = true
-	w.mu.Unlock()
-
-	if err := w.subscribe(); err != nil {
-		w.closeConnection()
-		return err
-	}
-
-	go w.pingLoop(ctx)
-	slog.Info("Bitget Spot Connected")
-	return nil
-}
-
-func (w *SpotWorker) subscribe() error {
+func (w *SpotWorker) OnConnect(ctx context.Context, conn *websocket.Conn) error {
 	args := make([]subscribeArg, 0, len(w.symbols))
 	for _, id := range w.symbols {
 		args = append(args, subscribeArg{InstType: "SPOT", Channel: "ticker", InstId: id})
 	}
 	req := subscribeRequest{Op: "subscribe", Args: args}
-	b, err := json.Marshal(req)
-	if err != nil {
-		slog.Error("Failed to marshal subscribe request", slog.Any("error", err))
-		return err
-	}
-	return w.threadSafeWrite(websocket.TextMessage, b)
+	b, _ := json.Marshal(req)
+	return w.base.Write(websocket.TextMessage, b)
 }
 
-func (w *SpotWorker) pingLoop(ctx context.Context) {
-	ticker := time.NewTicker(pingInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			w.threadSafeWrite(websocket.TextMessage, []byte("ping"))
-		}
+func (w *SpotWorker) OnMessage(ctx context.Context, msg []byte) {
+	if string(msg) == "pong" {
+		return
 	}
-}
 
-func (w *SpotWorker) threadSafeWrite(msgType int, data []byte) error {
-	w.writeMu.Lock()
-	defer w.writeMu.Unlock()
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	if w.conn == nil {
-		return fmt.Errorf("no conn")
-	}
-	return w.conn.WriteMessage(msgType, data)
-}
-
-func (w *SpotWorker) readLoop(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		w.mu.RLock()
-		if w.conn == nil {
-			w.mu.RUnlock()
-			return
-		}
-		w.conn.SetReadDeadline(time.Now().Add(readTimeout))
-		w.mu.RUnlock()
-
-		_, msg, err := w.conn.ReadMessage()
-		if err != nil {
-			w.closeConnection()
-			return
-		}
-		if string(msg) == "pong" {
-			continue
-		}
-		w.handleMessage(msg)
-	}
-}
-
-func (w *SpotWorker) handleMessage(msg []byte) {
 	var resp tickerResponse
-	json.Unmarshal(msg, &resp)
+	if err := json.Unmarshal(msg, &resp); err != nil {
+		return
+	}
 	if resp.Arg.Channel != "ticker" || len(resp.Data) == 0 {
 		return
 	}
@@ -179,14 +80,18 @@ func (w *SpotWorker) handleMessage(msg []byte) {
 		ev.Symbol = symbol
 		ev.PriceMicros = quant.ToPriceMicrosStr(data.LastPr)
 		ev.QtySats = quant.ToQtySatsStr(data.BaseVolume)
-		ev.Exchange = "BITGET_S"
+		ev.Exchange = "BITGET_SPOT"
 
 		select {
 		case w.inbox <- ev:
 		default:
-			event.ReleaseMarketUpdateEvent(ev) // Release if dropped
+			event.ReleaseMarketUpdateEvent(ev)
 		}
 	}
+}
+
+func (w *SpotWorker) OnPing(ctx context.Context, conn *websocket.Conn) error {
+	return w.base.Write(websocket.TextMessage, []byte("ping"))
 }
 
 func (w *SpotWorker) findSymbol(instId string) string {
@@ -196,22 +101,4 @@ func (w *SpotWorker) findSymbol(instId string) string {
 		}
 	}
 	return ""
-}
-
-func (w *SpotWorker) closeConnection() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.conn != nil {
-		w.conn.Close()
-		w.conn = nil
-	}
-	w.connected = false
-}
-
-func (w *SpotWorker) Disconnect() {
-	if w.cancel != nil {
-		w.cancel()
-	}
-	w.closeConnection()
-	w.wg.Wait()
 }

@@ -3,10 +3,10 @@ package domain
 // Position represents an open trading position.
 // All monetary values are strictly int64.
 type Position struct {
-	Symbol              string
-	QtySats             int64 // Positive for Long, Negative for Short.
-	AvgEntryPriceMicros int64 // Weighted Average Entry Price.
-	RealizedPnLMicros   int64 // Realized Profit/Loss.
+	Symbol              string `json:"symbol"`
+	QtySats             int64  `json:"qty,string"`             // Positive for Long, Negative for Short.
+	AvgEntryPriceMicros int64  `json:"avg_entry_price,string"` // Weighted Average Entry Price.
+	RealizedPnLMicros   int64  `json:"realized_pnl,string"`    // Realized Profit/Loss.
 }
 
 // IsLong checks if the position is Long.

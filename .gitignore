@@ -36,10 +36,16 @@ go.work
 .github/
 
 # Security (Secrets & Keys)
+# Migrated to _workspace/secrets
 secrets/
 *.pem
 *.key
 
 # Runtime Data & Logs
+# Migrated to _workspace/data & _workspace/logs
 data/
 logs/
+
+# Local Workspace (Runtime Environment)
+# 🚨 ALL LOCAL SECRETS/DB/LOGS GO HERE 🚨
+_workspace/

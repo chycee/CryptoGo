@@ -10,7 +10,6 @@ import (
 	"crypto_go/internal/storage"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -37,8 +36,8 @@ func (b *Bootstrap) Initialize() error {
 	event.Warmup()
 	slog.Info("🔥 Event Pool Warmed up")
 
-	// 1. Load Config
-	cfg, err := infra.LoadConfig("configs/config.yaml")
+	// 1. Load Config (Dynamic Path Resolution)
+	cfg, err := infra.LoadConfig(infra.ResolveConfigPath())
 	if err != nil {
 		return err // Let main handle the error
 	}
@@ -49,22 +48,33 @@ func (b *Bootstrap) Initialize() error {
 	slog.SetDefault(logger)
 
 	// 3. Initialize EventStore (Single-Writer WAL DB)
-	// STES: Data Isolation - data/{mode}/events.db
+	// STES: Data Isolation - _workspace/data/{mode}/events.db
 	mode := strings.ToLower(cfg.Trading.Mode)
 	if mode == "" {
 		mode = "paper" // Default to paper if not set
 	}
 
-	dataDir := filepath.Join("data", mode)
-	logDir := filepath.Join("logs", mode)
+	workDir := infra.GetWorkspaceDir()
+	dataDir := filepath.Join(workDir, "data", mode)
+	logDir := filepath.Join(workDir, "logs", mode)
 
-	// Ensure directories exist
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
+	// Ensure directories exist (0755)
+	if err := infra.EnsureDir(dataDir); err != nil {
 		return fmt.Errorf("failed to create data dir: %w", err)
 	}
-	if err := os.MkdirAll(logDir, 0755); err != nil {
+	if err := infra.EnsureDir(logDir); err != nil {
 		return fmt.Errorf("failed to create log dir: %w", err)
 	}
+
+	// 3.1 Singleton Instance Lock (OS Security)
+	// Prevent DB corruption on Desktop environments by blocking multi-process access to same data.
+	unlock, err := infra.CreateLockFile(workDir)
+	if err != nil {
+		return err
+	}
+	// Note: In a real app, you might want to store 'unlock' in the Bootstrap struct to call on Exit.
+	// For now, we rely on os.Exit cleaning up or manual cleanup if crash occurs.
+	_ = unlock
 
 	dbPath := filepath.Join(dataDir, "events.db")
 	evStore, err := storage.NewEventStore(dbPath)
